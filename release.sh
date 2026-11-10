@@ -46,7 +46,7 @@ else
   REMOTE="beta"
   BRANCH="beta"
   REPO="ZONGZI-000/zongzi-mygo-plugin-beta"
-  PRERELEASE=1
+  PRERELEASE=0  # ⚠️ 不能标 prerelease：GitHub 的 /releases/latest 会跳过预发布导致 404
 fi
 
 if [ -z "$VERSION" ]; then

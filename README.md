@@ -33,39 +33,33 @@ MyGo 的解码器限制很死，踩过不少：
 
 ## 安装
 
-### 直接下载 zip（推荐）
+在 MyGo 里打开 `Settings > Plugins > +`，填仓库地址。
 
-最新版地址**固定不变**，出什么新版本都是这个链接：
+**稳定版：**
 
 ```
-https://github.com/ZONGZI-000/zongzi-mygo-plugin/releases/latest/download/zongzi-music-latest.zip
+ZONGZI-000/zongzi-mygo-plugin-stable
 ```
 
-解压到 `%APPDATA%\MyGo Music\plugins\zongzi-music\` 即可。历史版本在 [Releases](https://github.com/ZONGZI-000/zongzi-mygo-plugin/releases) 里按版本号归档。
+**测试版**（更新快，可能有毛刺）：
 
-### 从源码装
-
-两条通道，按需选：
-
-```bash
-# 稳定版（推荐）
-git clone -b master https://github.com/ZONGZI-000/zongzi-mygo-plugin.git \
-  "$APPDATA/MyGo Music/plugins/zongzi-music"
-
-# 测试版（尝鲜，可能有毛刺）
-git clone -b beta https://github.com/ZONGZI-000/zongzi-mygo-plugin.git \
-  "$APPDATA/MyGo Music/plugins/zongzi-music"
+```
+ZONGZI-000/zongzi-mygo-plugin-beta
 ```
 
-已安装的想切通道：
+MyGo 会自动取最新 release 里的 `plugin-win32-amd64.zip` 安装。新版本发布后设置里会显示更新提示。
 
-```bash
-cd "$APPDATA/MyGo Music/plugins/zongzi-music"
-git fetch && git checkout beta && git pull     # 切 beta
-git fetch && git checkout master && git pull   # 回稳定版
+两个仓库都加了 `mygo-music-plugin` topic，也能在 MyGo 插件市场里搜到。
+
+### 手动装
+
+不想用 MyGo 的安装器，也可以直接下 zip：
+
+```
+https://github.com/ZONGZI-000/zongzi-mygo-plugin-stable/releases/latest/download/plugin-win32-amd64.zip
 ```
 
-⚠️ 切完要重启 MyGo。
+解压到 `%APPDATA%\MyGo Music\plugins\zongzi-music\`。历史版本在各自仓库的 Releases 里按版本号归档。
 
 ### ffmpeg
 
@@ -76,12 +70,14 @@ git fetch && git checkout master && git pull   # 回稳定版
 
 ## 版本
 
-| 通道 | 版本号形态 | 分支 | 节奏 |
-|---|---|---|---|
-| 稳定版 | `1.0.0` | `master` | **少**，攒够验证过的改动才发 |
-| 测试版 | `1.1.0-beta.7` | `beta` | **多**，随改随发 |
+两个独立仓库，互不干扰：
 
-日常更新在 `beta`，稳定版是 `beta` 磨稳后的固化快照。发版流程见 [RELEASING.md](RELEASING.md)。
+| 通道 | 仓库 | 版本号 | 节奏 |
+|---|---|---|---|
+| 稳定版 | `zongzi-mygo-plugin-stable` | `1.0.0` | **少**，攒够验证过的改动才发 |
+| 测试版 | `zongzi-mygo-plugin-beta` | `1.1.0-beta.1` | **多**，随改随发 |
+
+稳定版是 beta 磨稳后的固化快照。发版流程见 [RELEASING.md](RELEASING.md)。
 
 ## 开发
 
