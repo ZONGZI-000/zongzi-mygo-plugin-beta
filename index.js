@@ -5183,7 +5183,35 @@ function runOnce(cmd, args, timeoutMs = 180000) {
         try {
           out = proc.errorOutput ? String(proc.errorOutput() || "") : "";
         } catch {}
-        resolve({ ok: true, out });
+        /* ⚠️⚠️ 只读 stderr 会漏掉 stdout！
+           实测这个 ffmpeg 构建（eugeneware/ffmpeg-static b6.0，gyan.dev essentials）
+           把 `-version` 打到 **stdout**（1427 字节），stderr 是 0 字节。
+           之前这里只看 errorOutput()，于是校验永远拿到空串、
+           /ffmpeg version/ 永不匹配 → ensureFfmpeg() 返回 null，
+           结果明明是下载成功的 78MB 文件被判定失败，每次启动都要重下。
+           现在把 stdout 一并读进来（proc.stdout 拿不到也不影响 stderr 路径）。 */
+        try {
+          const so = proc.stdout;
+          if (so) {
+            if (typeof so.read === "function") {
+              const rest = so.read();
+              if (rest) out += String(rest);
+            }
+            if (typeof so.errorOutput === "function") {
+              out += String(so.errorOutput() || "");
+            }
+          }
+        } catch {}
+        /* ⚠️⚠️ very important：spawn 失败（比如可执行文件不存在）时，
+           MyGo 的 proc.wait() 并不会 reject —— 它照样 resolve，
+           真正的错误只留在 errorOutput() 里（形如
+           「spawn D:\\...\\ffmpeg.exe ENOENT」）。
+           如果这时直接 ok:true，调用方就会把「不存在的文件」当成可用的，
+           于是 ensureFfmpeg() 跳过下载、直接返回一个根本不存在的路径，
+           后面转码时才炸。这里显式识别「进程压根没起来」的情况。 */
+        const spawnFailed =
+          /ENOENT|no such file|not found|cannot find the file|不是内部或外部命令/i.test(out);
+        resolve({ ok: !spawnFailed, out });
       })
       .catch(() => {
         if (done) return;
@@ -5223,10 +5251,23 @@ async function ensureFfmpeg() {
     }
 
     // 先试试现有文件能不能跑（存在且可执行就直接用）
+    /* ⚠️ 这里同样不能只靠 /ffmpeg version/ 匹配：
+       该构建把版本打到 stdout，而 host.spawn 只暴露 stderr，
+       于是「文件明明好好的」也会被判成坏的 → 白白重下 78MB。
+       判据放宽成「进程能正常跑完(ok) 就算可用」——
+       spawn 失败（文件不存在/不可执行）时 runOnce 会返回 ok=false。 */
     trace("ffmpeg 探测", abs);
     const probe = await runOnce(abs, ["-version"], 8000);
     trace("ffmpeg 探测结果", "ok=" + probe.ok + " out=" + String(probe.out || "").slice(0, 100));
-    if (probe.ok && /ffmpeg version/i.test(probe.out)) {
+    /* 能跑完(ok) → 直接用。
+       ⚠️ 判据不能要求「输出里有 ffmpeg version」：
+          这个构建把版本信息打到 stdout，而 MyGo 的 host.spawn 封装
+          只暴露 errorOutput()（stderr），真实环境拿到的就是空串，
+          于是「文件明明好的」也会被判失败、每次启动重下 78MB。
+       ⚠️ 也不能无条件信任 ok：spawn 找不到文件时 MyGo 的 proc.wait()
+          照样 resolve。好在 runOnce 已把 ENOENT 这类错误识别成 ok=false。 */
+    if (probe.ok) {
+      trace("✓ 已有 ffmpeg 可用，跳过下载");
       DOWNLOAD_STATE = "ready";
       return abs;
     }
@@ -5263,9 +5304,21 @@ async function ensureFfmpeg() {
     }
 
     // 校验能跑
+    /* ⚠️⚠️ 校验只能靠「能不能跑起来」，不能靠输出内容！
+       实测（2026-11-10）：
+         · 这个构建（eugeneware/ffmpeg-static b6.0 / gyan.dev essentials）
+           把 `-version` 打到 **stdout**（1427 字节），stderr 是 0 字节
+         · MyGo 的 host.spawn 封装只暴露 errorOutput()（stderr）
+         · 于是校验拿到空串 → /ffmpeg version/ 永不匹配
+         · 结果：下载成功的 78MB 文件被判定失败，每次启动都重下
+       同理，用 PowerShell 问文件大小也拿不到值（封装不给 stdout）。
+
+       所以判据收敛成一条：**进程能正常起来（runOnce 的 ok）**。
+       文件不存在 / 不可执行时，runOnce 会从 errorOutput 里识别出
+       ENOENT 并返回 ok=false，这条路径是可靠的（已实测）。 */
     const check = await runOnce(abs, ["-version"], 15000);
     trace("下载后校验", "ok=" + check.ok + " out=" + String(check.out || "").slice(0, 100));
-    if (check.ok && /ffmpeg version/i.test(check.out)) {
+    if (check.ok) {
       console.log("[粽子] ffmpeg 下载完成并可用");
       DOWNLOAD_STATE = "ready";
       return abs;

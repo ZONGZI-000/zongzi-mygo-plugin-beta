@@ -1,0 +1,14 @@
+{
+  "latest": {
+    "version": "1.0.0",
+    "zip": "releases/latest/zongzi-music-latest.zip",
+    "size": 148129
+  },
+  "history": [
+    {
+      "version": "1.0.0",
+      "zip": "releases/history/zongzi-music-1.0.0.zip",
+      "size": 148129
+    }
+  ]
+}

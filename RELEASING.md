@@ -5,13 +5,25 @@
 - **beta 多** —— 改动随做随发，小步快跑，不攒
 - **稳定版少** —— 攒够一批验证过的改动才发一次，宁缺毋滥
 
+## 分发包结构
+
+MyGo 用户按**固定地址**取最新版，所以文件名必须永远不变：
+
 ```
-1.0.0 ──────────────────────────────────────────► 稳定
-   └─► 1.1.0-beta.1 ─► 1.1.0-beta.2 ─► 1.1.0-beta.3
-       1.1.0-beta.4 ─► 1.1.0-beta.5 ─► ...  攒够 ──► 1.1.0
+releases/
+├── latest/
+│   └── zongzi-music-latest.zip      ← 固定名称，永远指向最新版
+├── history/
+│   ├── zongzi-music-1.0.0.zip       ← 历史版本，按版本号归档
+│   └── zongzi-music-1.1.0.zip
+└── index.json                        ← 版本索引，记录 latest + 所有历史
 ```
 
-beta 编号可以一直加，1.1.0 磨多久就发多少个 beta。觉得这批功能稳了、用量够了，才毕业成 `1.1.0`。
+**规则：**
+
+1. **最新包文件名固定** —— 永远是 `zongzi-music-latest.zip`，内容随版本覆盖。用户的下载地址不用改。
+2. **历史版本单独打包归档** —— 每发一版就往 `history/` 存一份 `zongzi-music-<版本>.zip`，不覆盖。
+3. zip 不入 git（走 GitHub Release 分发），`index.json` 入库便于查版本。
 
 ## 版本号
 
@@ -29,105 +41,111 @@ beta 用预发布后缀：`1.1.0-beta.1`、`1.1.0-beta.2`……
 
 | 分支 | 用途 | 更新频率 |
 |---|---|---|
-| `beta` | 日常开发主线，所有改动先落这里 | **高**，几乎每次改动都推 |
-| `main` | 稳定版，只在发版时从 beta 合入 | **低**，攒够才动 |
+| `beta` | 日常开发主线 | **高**，几乎每次改动都推 |
+| `master` | 稳定版，攒够才从 beta 合入 | **低** |
 
-> 现有仓库主分支是 `master`，等同 `main` 的角色。
+## 发布命令
 
-## 日常：发 beta（高频）
+一条命令搞定打包 + 归档 + tag + Release：
 
-改完就直接发，不要等：
+```bash
+./release.sh                 # 版本号自动读 plugin.json
+./release.sh 1.1.0           # 指定版本号
+./release.sh 1.1.0 --no-push # 只本地打包，不提交推送（验证用）
+```
+
+它依次做四件事：
+
+1. 打包 `releases/latest/zongzi-music-latest.zip`（**固定名称**）
+2. 归档 `releases/history/zongzi-music-<版本>.zip`
+3. 生成 `releases/index.json`
+4. 提交 + 打 tag + 推 GitHub + 创建 Release（带两个 zip）
+
+**只打包不发布：**
+
+```bash
+powershell -NoProfile -ExecutionPolicy Bypass -File ./pack_release.ps1
+```
+
+## 打包包含什么
+
+**白名单机制** —— 只有下面这些会进包，其他一律排除（调试脚本、测试、`bin/`、`node_modules` 都无法混入）：
+
+```
+index.js  plugin.json  README.md  RELEASING.md
+NOTES.md  BANNED_ARTISTS.md  deploy.sh  locales/
+```
+
+要新增运行时文件，改 `pack_release.ps1` 里的 `$allowTop` / `$allowDir`。
+
+## beta 发版（高频）
+
+改完就发，只要求语法过 + 测试全绿：
 
 ```bash
 node --check index.js
-node test_all.cjs              # 全绿就行
+node test_all.cjs
 
-# 版本号在 1.1.0-beta.N 上 +1
-#   plugin.json: "version": "1.1.0-beta.7"
+# 改 plugin.json: "version": "1.1.0-beta.7"
+./release.sh
 
-git add -A
-git commit -m "beta: v1.1.0-beta.7 - 改了什么"
-git push origin beta
-
-gh release create v1.1.0-beta.7 --prerelease \
-  --title "v1.1.0-beta.7" --notes "改了什么"
+# Release 标为预发布
+gh release edit v1.1.0-beta.7 --prerelease
 ```
 
-beta 的要求只有两条：**语法过 + 测试全绿**。不需要完整实测，出问题下一个 beta 修。
+## 稳定版发版（低频）
 
-## 偶尔：发稳定版（低频）
+**不要每个 beta 都毕业。** 攒到这些情况才发：
 
-**不要每个 beta 都毕业。** 攒到下面这些情况才发：
-
-- 某个功能在 beta 上跑了一两周没出新问题
-- 攒了若干个「用户会感知到」的改进，值得写进更新日志
-- 有人反馈某个 beta 已经足够稳，可以固化了
+- 某功能在 beta 跑了一两周没出问题
+- 攒了若干用户能感知的改进
+- 有人反馈某个 beta 足够稳
 
 ```bash
-# 1. 从 beta 合入主分支
-git checkout master
-git merge beta
+git checkout master && git merge beta
 
-# 2. 版本号去掉 beta 后缀，修订号/次版本按实际改
-#    plugin.json: "version": "1.1.0"
-
-# 3. 验证三连
+# 改 plugin.json: "version": "1.1.0"（去掉 beta 后缀）
 node --check index.js
-node test_all.cjs              # 必须 0 失败
-./deploy.sh                    # 本地 MyGo 实测：搜索/播放/歌手页都过一遍
+node test_all.cjs
+./deploy.sh                    # 本地 MyGo 实测
 
-# 4. 提交 + tag
-git add -A
-git commit -m "release: v1.1.0 稳定版"
-git tag -a v1.1.0 -m "v1.1.0 稳定版"
-git push origin master
-git push origin v1.1.0
-
-# 5. Release（注意：不加 --prerelease）
-gh release create v1.1.0 --title "v1.1.0" --notes "## 更新内容
-- 变更点1
-- 变更点2"
+./release.sh 1.1.0
 ```
 
-稳定版的硬要求：**测试全绿 + 本地 MyGo 实测过**。没实测就发稳定版就是耍流氓。
+稳定版硬要求：**测试全绿 + 本地 MyGo 实测过**。
 
-## 装哪个
+## 用户怎么装
 
 ```bash
-# 稳定版（想省心）
+# 稳定版
 git clone -b master https://github.com/ZONGZI-000/zongzi-mygo-plugin.git \
   "$APPDATA/MyGo Music/plugins/zongzi-music"
 
-# beta（想尝鲜，跟着更新）
+# 测试版
 git clone -b beta https://github.com/ZONGZI-000/zongzi-mygo-plugin.git \
   "$APPDATA/MyGo Music/plugins/zongzi-music"
 ```
 
-已有安装切通道：
+⚠️ MyGo 只在启动时读插件，装完要重启。
 
-```bash
-cd "$APPDATA/MyGo Music/plugins/zongzi-music"
-git fetch && git checkout beta && git pull     # 切 beta
-git fetch && git checkout master && git pull   # 回稳定版
-```
-
-⚠️ 切完要重启 MyGo。
+`bin/`（ffmpeg）不入库，首次使用时自动下载。建议自备 ffmpeg 放进 `bin/win32-amd64/`。
 
 ## 检查清单
 
-**beta**（快，只查前两项）
+**beta**（快）
 
-- [ ] `plugin.json` 版本号带 `-beta.N` 且 N 递增
+- [ ] `plugin.json` 版本号带 `-beta.N`
 - [ ] `node --check` + `test_all.cjs` 全绿
+- [ ] `./release.sh` 跑通
 - [ ] Release 打了 `--prerelease`
 
-**稳定版**（慢，全查）
+**稳定版**（全查）
 
-- [ ] `plugin.json` 版本号**没有** beta 后缀
+- [ ] 版本号**没有** beta 后缀
 - [ ] `node --check` 通过
 - [ ] `test_all.cjs` 0 失败
 - [ ] 本地 MyGo 实测：搜索 / 播放 / 歌手页 / 播客
-- [ ] git 里没有 `bin/`、`node_modules/`、`_*.py`、`_shots/`
-- [ ] 没有本地绝对路径、密钥、cookie 泄漏
+- [ ] `releases/latest/zongzi-music-latest.zip` 是最新的
+- [ ] `releases/history/` 里有对应版本归档
+- [ ] git 里没有 `bin/`、`node_modules/`、`_*`、covers/
 - [ ] 推了 master **和** tag
-- [ ] Release 没打 `--prerelease`
