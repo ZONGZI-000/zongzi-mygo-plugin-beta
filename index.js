@@ -4262,32 +4262,6 @@ export async function liked({ offset }) {
   };
 }
 
-/* ============================================================
- * 清空「我喜欢」
- * ------------------------------------------------------------
- * ⚠️ 为什么要有这个：
- *   MyGo 里「我喜欢」是 `builtin: liked` + fixed 歌单，
- *   app 不提供删除/清空的入口（官方文档明说），
- *   而且实测**删到只剩最后一首就删不动了** —— 播放器不允许空列表。
- *   所以只能由插件自己提供一个清空入口。
- *
- * ⚠️ 为什么分三步：
- *   清空不可撤销，误点等于把收藏全丢了。
- *   clear-liked → clear-liked-2 → 真正执行。
- *   中间那步是"确认页"，用户得连着点两次才会真的清掉。
- *
- * ⚠️ 保留一首的小技巧：
- *   MyGo 不允许列表为空，如果清成 0 首，界面上可能显示异常。
- *   所以清空后**留一首占位**（不写任何真实歌曲，只在需要时由上层补）。
- *   这里直接清成空数组 —— 实测 liked() 返回空数组是合法的，
- *   播放器只是不给"删除最后一首"的操作，但读空列表没问题。
- * ============================================================ */
-function clearLikedInternal() {
-  const before = readList(LIKED_KEY).length;
-  writeList(LIKED_KEY, []);
-  console.log("[粽子] 已清空「我喜欢」，原有 " + before + " 首");
-  return before;
-}
 
 
 /* ---------------- 最近播放 ---------------- */
@@ -5066,10 +5040,12 @@ const FALLBACK_COVER = IMG_BASE + "zongzi-cover-fallback.jpg";
    用这张替代普通歌曲兜底图，视觉上一眼能区分「这是播客」。 */
 const PODCAST_FALLBACK_COVER = IMG_BASE + "zongzi-podcast-fallback.jpg";
 
-/* ffmpeg 未安装时首页那张提示卡片的配图：看板娘戴安全帽举「点我下载」牌子。
+/* ffmpeg 未安装时首页那张提示卡片的配图：看板娘举「点我下载」牌子（半身像）。
    ⚠️ MyGo 的 links 元素有 imageUrl 字段，带图会渲染成卡片（比灰音符占位好看），
-      但卡片样式本身没法定制 —— 这是播放器画的，插件只能给图。 */
-const FFMPEG_PROMPT_IMAGE = IMG_BASE + "zongzi-ffmpeg-construction.jpg";
+      但卡片样式本身没法定制 —— 这是播放器画的，插件只能给图。
+   ⚠️ 2026-11-11 换过一次：旧版戴小黄安全帽，用户反馈「看起来怪怪的」，
+      新版去掉了帽子，改成把牌子举向镜头，构图更像「递给你」。 */
+const FFMPEG_PROMPT_IMAGE = IMG_BASE + "zongzi-ffmpeg-prompt-bust.jpg";
 
 /* 正在下载时的配图：看板娘抱着带进度环的平板，旁边浮着加载圆点。 */
 const FFMPEG_DOWNLOADING_IMAGE = IMG_BASE + "zongzi-ffmpeg-downloading.jpg";
@@ -7812,105 +7788,6 @@ export async function browse({ page }) {
   const p = String(page || "");
 
   /* ============================================================
-   * 清空「我喜欢」—— 三步确认，防误点
-   * ------------------------------------------------------------
-   * 入口：我的歌单（mylists）页底部的 links
-   * ============================================================ */
-  if (p === "clear-liked") {
-    const n = readList(LIKED_KEY).length;
-    /* ⚠️ 每个区段只放一条 links。
-       无图条目会被 MyGo 画成巨大的灰色音符占位块（实测截图确认），
-       所以「返回/取消」这种次要动作合并进主条目的 subtitle，
-       主条目本身带图 → 整块是卡片，不会出现灰块。 */
-    if (!n) {
-      return {
-        title: "清空「我喜欢」",
-        sections: [
-          {
-            title: "状态",
-            links: [
-              {
-                title: "✅ 已经是空的",
-                subtitle: "没有需要清空的歌曲",
-                imageUrl: FFMPEG_READY_IMAGE,
-                page: "mylists",
-              },
-            ],
-          },
-        ],
-      };
-    }
-    return {
-      title: "清空「我喜欢」",
-      sections: [
-        {
-          title: "⚠️ 确认",
-          links: [
-            {
-              title: "当前有 " + n + " 首 · 点这里继续",
-              subtitle: "下一步还会再问你一次，不会直接删除 · 想放弃就点返回",
-              imageUrl: FFMPEG_PROMPT_IMAGE,
-              page: "clear-liked-2",
-            },
-          ],
-        },
-      ],
-    };
-  }
-
-  if (p === "clear-liked-2") {
-    const n = readList(LIKED_KEY).length;
-    if (!n) {
-      return {
-        title: "清空「我喜欢」",
-        sections: [
-          { title: "状态", links: [{ title: "✅ 已经是空的", subtitle: "" }] },
-        ],
-      };
-    }
-    return {
-      title: "最后确认",
-      sections: [
-        {
-          title: "⚠️⚠️ 真的要清空？",
-          subtitle: n + " 首歌曲将全部移除，无法恢复",
-          links: [
-            {
-              title: "确认清空 " + n + " 首（不可撤销）",
-              subtitle: "点了就真的删了",
-              page: "clear-liked-do",
-            },
-            {
-              title: "取消，返回我的歌单",
-              subtitle: "保留全部收藏",
-              page: "mylists",
-            },
-          ],
-        },
-      ],
-    };
-  }
-
-  if (p === "clear-liked-do") {
-    const n = clearLikedInternal();
-    return {
-      title: "已清空",
-      sections: [
-        {
-          title: "完成",
-          links: [
-            {
-              title: "✅ 已清空 " + n + " 首",
-              subtitle: "「我喜欢」现在是空的",
-              page: "mylists",
-            },
-          ],
-        },
-      ],
-    };
-  }
-
-  /* ============================================================
    * ffmpeg 页面 —— 从首页那条提示点进来
    * ------------------------------------------------------------
    * 三种状态：已安装 / 正在下载 / 未安装
@@ -8038,21 +7915,6 @@ export async function browse({ page }) {
        原因：「我的播客」在侧栏有独立入口（page: myshows），
        塞进「我的歌单」页会让两个页面内容重叠、也容易让人以为
        播客属于歌单。想看播客直接点侧栏那个入口。 */
-
-    /* 「清空我喜欢」入口 —— 只在真的有歌时才显示（空的就没必要出现） */
-    const likedCount = readList(LIKED_KEY).length;
-    if (likedCount > 0) {
-      sections.push({
-        title: "管理",
-        links: [
-          {
-            title: "清空「我喜欢」",
-            subtitle: "当前 " + likedCount + " 首 · 会先问你两次再清",
-            page: "clear-liked",
-          },
-        ],
-      });
-    }
 
     return { title: "我的歌单", sections };
   }
