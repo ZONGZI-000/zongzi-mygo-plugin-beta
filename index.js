@@ -7771,7 +7771,19 @@ export async function home() {
   const SLOT_LABEL = ["", " · 第二单", " · 第三单", " · 第四单", " · 第五单", " · 第六单", " · 第七单"];
   HOME_CATS.forEach((c, i) => {
     const pls = [];
-    const cover = (arr) => (arr[0] && arr[0].album && arr[0].album.imageUrl) || (arr[0] && arr[0].artwork) || "";
+    /* ⚠️⚠️ 封面必须回落到 FALLBACK_COVER！
+       实测（2026-11-11 截图）：以前这里是 `|| ""`，
+       某些混排（比如第一首是酷我/QQ 的冷门曲）拿不到专辑封面，
+       imageUrl 就是空串 → MyGo 画一个**纯灰方块**，首页一排排灰块很难看。
+       规则：有专辑封面用专辑封面，没有就用项目兜底图（看板娘黑胶那张）。 */
+    const cover = (arr) => {
+      for (const t of arr || []) {
+        if (!t) continue;
+        const art = (t.album && t.album.imageUrl) || t.artwork || "";
+        if (art) return art;
+      }
+      return FALLBACK_COVER;
+    };
     for (let s = 0; s < SLOTS_PER_CAT; s++) {
       const m = catMixes[i * SLOTS_PER_CAT + s] || [];
       if (m.length < 6) continue;
@@ -7806,13 +7818,24 @@ export async function browse({ page }) {
    * ============================================================ */
   if (p === "clear-liked") {
     const n = readList(LIKED_KEY).length;
+    /* ⚠️ 每个区段只放一条 links。
+       无图条目会被 MyGo 画成巨大的灰色音符占位块（实测截图确认），
+       所以「返回/取消」这种次要动作合并进主条目的 subtitle，
+       主条目本身带图 → 整块是卡片，不会出现灰块。 */
     if (!n) {
       return {
         title: "清空「我喜欢」",
         sections: [
           {
             title: "状态",
-            links: [{ title: "✅ 已经是空的", subtitle: "没有需要清空的歌曲" }],
+            links: [
+              {
+                title: "✅ 已经是空的",
+                subtitle: "没有需要清空的歌曲",
+                imageUrl: FFMPEG_READY_IMAGE,
+                page: "mylists",
+              },
+            ],
           },
         ],
       };
@@ -7825,13 +7848,9 @@ export async function browse({ page }) {
           links: [
             {
               title: "当前有 " + n + " 首 · 点这里继续",
-              subtitle: "下一步还会再问你一次，不会直接删除",
+              subtitle: "下一步还会再问你一次，不会直接删除 · 想放弃就点返回",
+              imageUrl: FFMPEG_PROMPT_IMAGE,
               page: "clear-liked-2",
-            },
-            {
-              title: "算了，返回",
-              subtitle: "什么都不做 · 清空不能撤销，所以问你两次",
-              page: "mylists",
             },
           ],
         },
@@ -7946,13 +7965,10 @@ export async function browse({ page }) {
             title: "⏳ 正在下载",
             links: [
               {
+                /* 只放一条：第二条没图会变成灰色占位块。 */
                 title: "正在后台下载，不用等",
-                subtitle: "约 78 MB · 下完重进首页，提示自动消失",
+                subtitle: "约 78 MB · 存进插件目录，不改系统环境 · 下完重进首页提示自动消失",
                 imageUrl: FFMPEG_DOWNLOADING_IMAGE,
-              },
-              {
-                title: "在做什么？把 ffmpeg.exe 存进插件目录",
-                subtitle: "不需要管理员权限，也不改系统环境",
               },
             ],
           },
@@ -7985,12 +8001,12 @@ export async function browse({ page }) {
           links: [
             {
               title: "正在后台下载，不用等",
-              subtitle: "约 78 MB · YouTube / 播客要它转 mp3 才能播",
+              /* ⚠️⚠️ 一个区段里只放**一条** links！
+                 实测截图：没有 imageUrl 的 second 条目会渲染成一个巨大的
+                 灰色音符占位块（和卡片一样高），比不放还丑。
+                 所以所有要说的都压进这一条的 subtitle，不再加第二条。 */
+              subtitle: "约 78 MB · YouTube / 播客要它转 mp3 才能播 · 已有 ffmpeg.exe 可放进 " + st.path + " 跳过下载",
               imageUrl: FFMPEG_DOWNLOADING_IMAGE,
-            },
-            {
-              title: "已经下过了？把 ffmpeg.exe 放进 " + st.path,
-              subtitle: "放好就不用重新下，重进首页提示会自动消失",
             },
           ],
         },
