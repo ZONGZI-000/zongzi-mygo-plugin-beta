@@ -5071,6 +5071,9 @@ const PODCAST_FALLBACK_COVER = IMG_BASE + "zongzi-podcast-fallback.jpg";
       但卡片样式本身没法定制 —— 这是播放器画的，插件只能给图。 */
 const FFMPEG_PROMPT_IMAGE = IMG_BASE + "zongzi-ffmpeg-construction.jpg";
 
+/* 正在下载时的配图：看板娘抱着带进度环的平板，旁边浮着加载圆点。 */
+const FFMPEG_DOWNLOADING_IMAGE = IMG_BASE + "zongzi-ffmpeg-downloading.jpg";
+
 /* ffmpeg 已就绪时的配图：看板娘敬礼 + 绿色对勾徽章（半身像）。
    ⚠️ 用半身像而不是全身 —— 全身在卡片里缩得太小看不清表情。 */
 const FFMPEG_READY_IMAGE = IMG_BASE + "zongzi-ffmpeg-ready-bust.jpg";
@@ -7694,19 +7697,24 @@ export async function home() {
       const downloading = DOWNLOAD_STATE === "downloading" || !!DOWNLOAD_PROMISE;
       const failed = DOWNLOAD_STATE === "failed";
 
-      /* 带图卡片：用看板娘「点我下载」的图当 imageUrl。
+      /* 带图卡片：用看板娘的图当 imageUrl。
          ⚠️ 卡片样式（图片大小、圆角、间距）是 MyGo 画的，插件改不了；
             我们能做的只是「给图 / 不给图」。
             不给图 → 灰音符占位（更丑）；给图 → 至少是本项目的看板娘。
-         所以这里是「两害相权取其轻」，不是理想形态。 */
+         所以这里是「两害相权取其轻」，不是理想形态。
+
+         ⚠️⚠️ 说明文字一律写进 **title**，不放 subtitle。
+            实测截图：subtitle 在窄卡片里会被截断成「YouTube / 播客播放需要...」，
+            用户根本看不全。title 是主行，字号大、空间足，能完整显示。
+            subtitle 只放真正次要的补充（比如字数、状态）。 */
       if (downloading) {
         sections.push({
           title: "⏳ ffmpeg 下载中",
           links: [
             {
-              title: "点这里查看进度",
-              subtitle: "下载完重进首页，这条会自动消失",
-              imageUrl: FFMPEG_PROMPT_IMAGE,
+              title: "正在后台下载，点这里查看进度",
+              subtitle: "下载期间 YouTube / 播客暂时放不了",
+              imageUrl: FFMPEG_DOWNLOADING_IMAGE,
               page: "ffmpeg",
             },
           ],
@@ -7716,8 +7724,8 @@ export async function home() {
           title: "⚠️ ffmpeg 未安装",
           links: [
             {
-              title: "上次下载失败 · 点这里重试",
-              subtitle: "播放 YouTube / 播客需要它",
+              title: "上次下载失败，点这里重试",
+              subtitle: "播放 YouTube / 播客需要 ffmpeg",
               imageUrl: FFMPEG_PROMPT_IMAGE,
               page: "ffmpeg",
             },
@@ -7729,7 +7737,7 @@ export async function home() {
           links: [
             {
               title: "点我下载（约 78 MB）",
-              subtitle: "播放 YouTube / 播客需要它 · 装好自动消失",
+              subtitle: "播放 YouTube / 播客需要它",
               imageUrl: FFMPEG_PROMPT_IMAGE,
               page: "ffmpeg",
             },
@@ -7943,11 +7951,12 @@ export async function browse({ page }) {
         title: "ffmpeg 下载中",
         sections: [
           {
-            title: "⏳ 进度",
+            title: "⏳ 正在下载",
             links: [
               {
-                title: "正在后台下载（约 78 MB）",
-                subtitle: "拿不到实时进度，下载完重进首页那条提示就会消失",
+                title: "正在后台下载，不用等",
+                subtitle: "约 78 MB · 下载完重进首页，提示会自动消失",
+                imageUrl: FFMPEG_DOWNLOADING_IMAGE,
               },
             ],
           },
@@ -7955,8 +7964,8 @@ export async function browse({ page }) {
             title: "说明",
             links: [
               {
-                title: "这一步在做什么",
-                subtitle: "正在把 ffmpeg.exe 下载到插件目录，约 78 MB，不需要管理员权限",
+                title: "在做什么",
+                subtitle: "把 ffmpeg.exe 存到插件目录，不需要管理员权限",
               },
             ],
           },
@@ -7981,8 +7990,9 @@ export async function browse({ page }) {
           title: "⏳ 已开始下载",
           links: [
             {
-              title: "正在后台下载 ffmpeg（约 78 MB）",
-              subtitle: "下载完回首页，那条提示会自动消失",
+              title: "正在后台下载，不用等",
+              subtitle: "约 78 MB · 下载完回首页，提示会自动消失",
+              imageUrl: FFMPEG_DOWNLOADING_IMAGE,
             },
           ],
         },
@@ -7991,11 +8001,11 @@ export async function browse({ page }) {
           links: [
             {
               title: "为什么要它",
-              subtitle: "YouTube 音频和播客 m4a 需要 ffmpeg 转码成 mp3 才能播",
+              subtitle: "YouTube 音频和播客要它转成 mp3 才能播",
             },
             {
-              title: "可以自己准备吗",
-              subtitle: "可以。把 ffmpeg.exe 放到 " + st.path + " 就跳过下载",
+              title: "能自己准备吗",
+              subtitle: "可以。把 ffmpeg.exe 放进 " + st.path,
             },
           ],
         },
