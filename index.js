@@ -8033,16 +8033,10 @@ export async function browse({ page }) {
     const pls = await playlists();
     const sections = [{ playlists: pls, empty: "还没有歌单，去收藏或新建一个吧" }];
 
-    /* 播客区：和歌单放在同一个「我的」页里，省得两边来回切。
-       只列已订阅的节目；没订阅就不占位置（避免空区块）。 */
-    const shows = readList(SUBSCRIBED_SHOW_KEY).map((s) => ({ ...s, subscribed: true }));
-    if (shows.length) {
-      sections.push({
-        title: "我的播客 · " + shows.length + " 个",
-        shows: shows,
-        empty: "还没订阅播客",
-      });
-    }
+    /* ⚠️ 播客区已从这里移除（2026-11-11 用户要求）。
+       原因：「我的播客」在侧栏有独立入口（page: myshows），
+       塞进「我的歌单」页会让两个页面内容重叠、也容易让人以为
+       播客属于歌单。想看播客直接点侧栏那个入口。 */
 
     /* 「清空我喜欢」入口 —— 只在真的有歌时才显示（空的就没必要出现） */
     const likedCount = readList(LIKED_KEY).length;
