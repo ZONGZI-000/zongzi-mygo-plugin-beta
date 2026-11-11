@@ -7830,17 +7830,8 @@ export async function browse({ page }) {
             },
             {
               title: "算了，返回",
-              subtitle: "什么都不做",
+              subtitle: "什么都不做 · 清空不能撤销，所以问你两次",
               page: "mylists",
-            },
-          ],
-        },
-        {
-          title: "说明",
-          links: [
-            {
-              title: "为什么要两步",
-              subtitle: "清空不能撤销，怕你误点",
             },
           ],
         },
@@ -7947,6 +7938,7 @@ export async function browse({ page }) {
 
     // 正在下载
     if (downloading) {
+      /* 说明合并进主卡片，不留单独的「说明」区段（灰块很难看）。 */
       return {
         title: "ffmpeg 下载中",
         sections: [
@@ -7955,17 +7947,12 @@ export async function browse({ page }) {
             links: [
               {
                 title: "正在后台下载，不用等",
-                subtitle: "约 78 MB · 下载完重进首页，提示会自动消失",
+                subtitle: "约 78 MB · 下完重进首页，提示自动消失",
                 imageUrl: FFMPEG_DOWNLOADING_IMAGE,
               },
-            ],
-          },
-          {
-            title: "说明",
-            links: [
               {
-                title: "在做什么",
-                subtitle: "把 ffmpeg.exe 存到插件目录，不需要管理员权限",
+                title: "在做什么？把 ffmpeg.exe 存进插件目录",
+                subtitle: "不需要管理员权限，也不改系统环境",
               },
             ],
           },
@@ -7983,6 +7970,13 @@ export async function browse({ page }) {
           本来就只有首页那一条链接会进来，所以直接启动是安全的。 */
     startFfmpegDownloadInBackground();
 
+    /* ⚠️ 不要再单独做「说明」区段！
+       实测截图：links 没有 imageUrl 时，MyGo 会画一个**灰色音符占位框**，
+       两个说明条目就变成两个大灰块，比不放还丑。
+       所以说明全部合并进主卡片：
+         · 主标题 → 动作（正在下载）
+         · 副标题 → 原因 + 体量 + 自备方式，压缩成一句
+       一句话塞不下的细节（比如具体目录）才单独留一行文字链接。 */
     return {
       title: "开始下载 ffmpeg",
       sections: [
@@ -7991,21 +7985,12 @@ export async function browse({ page }) {
           links: [
             {
               title: "正在后台下载，不用等",
-              subtitle: "约 78 MB · 下载完回首页，提示会自动消失",
+              subtitle: "约 78 MB · YouTube / 播客要它转 mp3 才能播",
               imageUrl: FFMPEG_DOWNLOADING_IMAGE,
             },
-          ],
-        },
-        {
-          title: "说明",
-          links: [
             {
-              title: "为什么要它",
-              subtitle: "YouTube 音频和播客要它转成 mp3 才能播",
-            },
-            {
-              title: "能自己准备吗",
-              subtitle: "可以。把 ffmpeg.exe 放进 " + st.path,
+              title: "已经下过了？把 ffmpeg.exe 放进 " + st.path,
+              subtitle: "放好就不用重新下，重进首页提示会自动消失",
             },
           ],
         },
