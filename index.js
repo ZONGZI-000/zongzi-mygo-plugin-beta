@@ -5071,9 +5071,9 @@ const PODCAST_FALLBACK_COVER = IMG_BASE + "zongzi-podcast-fallback.jpg";
       但卡片样式本身没法定制 —— 这是播放器画的，插件只能给图。 */
 const FFMPEG_PROMPT_IMAGE = IMG_BASE + "zongzi-ffmpeg-construction.jpg";
 
-/* ffmpeg 已就绪时的配图：看板娘敬礼 + 绿色对勾徽章。
-   用在「工具/ffmpeg 状态页」，让用户一眼看到「一切正常」。 */
-const FFMPEG_READY_IMAGE = IMG_BASE + "zongzi-ffmpeg-ready.jpg";
+/* ffmpeg 已就绪时的配图：看板娘敬礼 + 绿色对勾徽章（半身像）。
+   ⚠️ 用半身像而不是全身 —— 全身在卡片里缩得太小看不清表情。 */
+const FFMPEG_READY_IMAGE = IMG_BASE + "zongzi-ffmpeg-ready-bust.jpg";
 
 function sinkThumb(t) {
   if (!t) return t;
@@ -7905,6 +7905,12 @@ export async function browse({ page }) {
 
     // 已装好
     if (st.installed) {
+      /* ⚠️ 必须提示重启。
+         刚下载完的 ffmpeg 只对**新起的进程**可见 —— 当前 MyGo 进程里
+         可能还缓存着「没有可用 ffmpeg」的旧状态（下载失败后 30 秒内
+         不重试、或转码进程句柄记在 DOWNLOAD_STATE 里）。
+         不重启的话用户会以为「下载了但没用」，实际是没生效。
+         所以这里显式给出「请重启客户端」的按钮级提示。 */
       return {
         title: "ffmpeg 已就绪",
         sections: [
@@ -7915,6 +7921,15 @@ export async function browse({ page }) {
                 title: "已安装，可以正常使用",
                 subtitle: "YouTube / 播客都能播了 · 路径: " + st.path,
                 imageUrl: FFMPEG_READY_IMAGE,
+              },
+            ],
+          },
+          {
+            title: "⚠️ 还需要一步",
+            links: [
+              {
+                title: "请重启 MyGo 客户端",
+                subtitle: "重启后新的 ffmpeg 才会生效，YouTube / 播客才能正常播放",
               },
             ],
           },
