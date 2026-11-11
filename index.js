@@ -5071,6 +5071,10 @@ const PODCAST_FALLBACK_COVER = IMG_BASE + "zongzi-podcast-fallback.jpg";
       但卡片样式本身没法定制 —— 这是播放器画的，插件只能给图。 */
 const FFMPEG_PROMPT_IMAGE = IMG_BASE + "zongzi-ffmpeg-construction.jpg";
 
+/* ffmpeg 已就绪时的配图：看板娘敬礼 + 绿色对勾徽章。
+   用在「工具/ffmpeg 状态页」，让用户一眼看到「一切正常」。 */
+const FFMPEG_READY_IMAGE = IMG_BASE + "zongzi-ffmpeg-ready.jpg";
+
 function sinkThumb(t) {
   if (!t) return t;
   const art = t.artwork || (t.album && t.album.imageUrl) || "";
@@ -7905,11 +7909,12 @@ export async function browse({ page }) {
         title: "ffmpeg 已就绪",
         sections: [
           {
-            title: "状态",
+            title: "✅ 一切正常",
             links: [
               {
-                title: "✅ 已安装，可以正常使用",
-                subtitle: "路径: " + st.path + " · YouTube / 播客都能播了",
+                title: "已安装，可以正常使用",
+                subtitle: "YouTube / 播客都能播了 · 路径: " + st.path,
+                imageUrl: FFMPEG_READY_IMAGE,
               },
             ],
           },
