@@ -5066,6 +5066,11 @@ const FALLBACK_COVER = IMG_BASE + "zongzi-cover-fallback.jpg";
    用这张替代普通歌曲兜底图，视觉上一眼能区分「这是播客」。 */
 const PODCAST_FALLBACK_COVER = IMG_BASE + "zongzi-podcast-fallback.jpg";
 
+/* ffmpeg 未安装时首页那张提示卡片的配图：看板娘戴安全帽举「点我下载」牌子。
+   ⚠️ MyGo 的 links 元素有 imageUrl 字段，带图会渲染成卡片（比灰音符占位好看），
+      但卡片样式本身没法定制 —— 这是播放器画的，插件只能给图。 */
+const FFMPEG_PROMPT_IMAGE = IMG_BASE + "zongzi-ffmpeg-construction.jpg";
+
 function sinkThumb(t) {
   if (!t) return t;
   const art = t.artwork || (t.album && t.album.imageUrl) || "";
@@ -7685,24 +7690,31 @@ export async function home() {
       const downloading = DOWNLOAD_STATE === "downloading" || !!DOWNLOAD_PROMISE;
       const failed = DOWNLOAD_STATE === "failed";
 
+      /* 带图卡片：用看板娘「点我下载」的图当 imageUrl。
+         ⚠️ 卡片样式（图片大小、圆角、间距）是 MyGo 画的，插件改不了；
+            我们能做的只是「给图 / 不给图」。
+            不给图 → 灰音符占位（更丑）；给图 → 至少是本项目的看板娘。
+         所以这里是「两害相权取其轻」，不是理想形态。 */
       if (downloading) {
         sections.push({
-          title: "⏳ ffmpeg 正在下载",
+          title: "⏳ ffmpeg 下载中",
           links: [
             {
               title: "点这里查看进度",
-              subtitle: "YouTube / 播客播放需要它 · 下完重进首页即消失",
+              subtitle: "下载完重进首页，这条会自动消失",
+              imageUrl: FFMPEG_PROMPT_IMAGE,
               page: "ffmpeg",
             },
           ],
         });
       } else if (failed) {
         sections.push({
-          title: "⚠️ ffmpeg 未就绪",
+          title: "⚠️ ffmpeg 未安装",
           links: [
             {
               title: "上次下载失败 · 点这里重试",
-              subtitle: "YouTube / 播客播放放不了 · 也可能只是网络问题",
+              subtitle: "播放 YouTube / 播客需要它",
+              imageUrl: FFMPEG_PROMPT_IMAGE,
               page: "ffmpeg",
             },
           ],
@@ -7712,8 +7724,9 @@ export async function home() {
           title: "⚠️ ffmpeg 未安装",
           links: [
             {
-              title: "点这里下载（约 78 MB）",
-              subtitle: "YouTube / 播客播放需要它 · 装好这条会自动消失",
+              title: "点我下载（约 78 MB）",
+              subtitle: "播放 YouTube / 播客需要它 · 装好自动消失",
+              imageUrl: FFMPEG_PROMPT_IMAGE,
               page: "ffmpeg",
             },
           ],
