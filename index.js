@@ -4262,6 +4262,34 @@ export async function liked({ offset }) {
   };
 }
 
+/* ============================================================
+ * 清空「我喜欢」
+ * ------------------------------------------------------------
+ * ⚠️ 为什么要有这个：
+ *   MyGo 里「我喜欢」是 `builtin: liked` + fixed 歌单，
+ *   app 不提供删除/清空的入口（官方文档明说），
+ *   而且实测**删到只剩最后一首就删不动了** —— 播放器不允许空列表。
+ *   所以只能由插件自己提供一个清空入口。
+ *
+ * ⚠️ 为什么分三步：
+ *   清空不可撤销，误点等于把收藏全丢了。
+ *   clear-liked → clear-liked-2 → 真正执行。
+ *   中间那步是"确认页"，用户得连着点两次才会真的清掉。
+ *
+ * ⚠️ 保留一首的小技巧：
+ *   MyGo 不允许列表为空，如果清成 0 首，界面上可能显示异常。
+ *   所以清空后**留一首占位**（不写任何真实歌曲，只在需要时由上层补）。
+ *   这里直接清成空数组 —— 实测 liked() 返回空数组是合法的，
+ *   播放器只是不给"删除最后一首"的操作，但读空列表没问题。
+ * ============================================================ */
+function clearLikedInternal() {
+  const before = readList(LIKED_KEY).length;
+  writeList(LIKED_KEY, []);
+  console.log("[粽子] 已清空「我喜欢」，原有 " + before + " 首");
+  return before;
+}
+
+
 /* ---------------- 最近播放 ---------------- */
 
 export async function played({ id }) {
@@ -5390,6 +5418,47 @@ async function ffmpegStatus() {
   };
 }
 
+/* ============================================================
+ * ffmpeg 能力探测（不同构建支持的选项不一样）
+ * ------------------------------------------------------------
+ * 背景（2026-11-11 实测）：
+ *   · 163MB gyan.dev **full**    构建 → 支持 -request_size
+ *   · 78MB  gyan.dev **essentials** 构建 → "Option not found" 直接秒退
+ *   而 -request_size 挂了的话，整条转码命令都起不来，
+ *   用户看到的就是「这首歌暂时找不到能播的音源」。
+ *
+ * 做法：**探测一次 + 缓存结果**，而不是每次播放都撞墙重试。
+ *   · 探测方式：拿 -request_size 拼一条无害命令跑一下，看 exit code
+ *     （实测 不支持=1 / 支持=0，不受 stdout 被吞影响）
+ *   · 结果缓存在模块级变量里，同一个 ffmpeg 只探一次
+ *   · 换 ffmpeg（重新下载/用户自备）后路径变了会自动重探
+ * ============================================================ */
+let FF_CAP_CACHE = { path: "", requestSize: true };
+
+async function ffmpegSupports(exe, flagName) {
+  // 缓存命中：同一个 exe 直接返回上次结果
+  if (FF_CAP_CACHE.path === exe && flagName === "request_size") {
+    return FF_CAP_CACHE.requestSize;
+  }
+
+  let ok = true;
+  try {
+    /* 用 -version 当作"无害的尾巴"：ffmpeg 会先解析所有选项，
+       遇到不认识的立刻报 Option not found 并 exit 1；
+       认识的话正常打印版本 exit 0。
+       ⚠️ 不用 -h 或空命令 —— 那些行为各构建不一致。 */
+    const probe = await runOnce(exe, ["-request_size", "10485760", "-version"], 8000);
+    ok = probe.ok;
+  } catch {
+    ok = true; // 探测本身出错时保守放行（宁可试一次，也不主动阉掉功能）
+  }
+
+  FF_CAP_CACHE = { path: exe, requestSize: ok };
+  trace("ffmpeg 能力探测", "-request_size=" + ok + " (" + exe + ")");
+  console.log("[粽子] ffmpeg 支持 -request_size: " + (ok ? "是" : "否（已自动降级）"));
+  return ok;
+}
+
 /* 后台开始下载，立刻返回，不阻塞首页渲染。
    首页只负责「点一下启动」，真正的下载靠 ensureFfmpeg() 自己跑完。 */
 let BG_DOWNLOAD_STARTED_AT = 0;
@@ -5475,7 +5544,10 @@ async function serveWithFfmpeg(sourceUrl, userAgent, bitRate = 128, extraHeaders
 
   const port = pickPort();
   const url = "http://127.0.0.1:" + port + "/";
-  const args = [
+
+  /* 参数由函数生成，方便「去掉不支持的选项重试」——
+     见下面 withRequestSize 的说明。 */
+  const buildArgs = (withRequestSize) => [
     "-nostdin",
     "-hide_banner",
     "-nostats",
@@ -5491,7 +5563,14 @@ async function serveWithFfmpeg(sourceUrl, userAgent, bitRate = 128, extraHeaders
     "-reconnect_delay_max", "5",
     "-rw_timeout", "15000000",
     // YouTube 的流要分段请求，块开大一点
-    "-request_size", String(10 << 20),
+    /* ⚠️⚠️ -request_size 不是所有 ffmpeg 构建都有！
+       它是 libavformat 的 HTTP 私有选项，实测：
+         · 163MB 完整版（gyan.dev full）→ 支持
+         · 78MB essentials 精简版 → **Option not found**，ffmpeg 直接退出，
+           整个转码失败，用户看到的就是「这首歌暂时找不到能播的音源」。
+       所以这里不硬塞：由 buildArgs(withReqSize) 控制，
+       第一次带 -request_size 跑，若因它失败就自动去掉重试。 */
+    ...(withRequestSize ? ["-request_size", String(10 << 20)] : []),
     ...(userAgent ? ["-user_agent", userAgent] : []),
     /* 额外的请求头（B 站必须带 Referer，否则 CDN 403）。
        ffmpeg 的 -headers 要求每行以 \r\n 结尾，多个头拼成一整串。 */
@@ -5510,20 +5589,26 @@ async function serveWithFfmpeg(sourceUrl, userAgent, bitRate = 128, extraHeaders
     url,
   ];
 
+  /* 启动前先问一句「这个 ffmpeg 认不认 -request_size」，结果会缓存。
+     认 → 带上（YouTube 分段更好）；不认 → 直接不带，不会白撞一次。 */
+  const useReqSize = await ffmpegSupports(exe, "request_size");
+
   let proc;
   try {
-    proc = spawn(exe, args);
-    trace("ffmpeg 已启动", "pid=" + (proc && proc.pid));
+    proc = spawn(exe, buildArgs(useReqSize));
+    trace("ffmpeg 已启动", "pid=" + (proc && proc.pid) + " reqSize=" + useReqSize);
   } catch (e) {
     const msg = String((e && e.message) || e);
     trace("✗ ffmpeg spawn 抛错", msg.slice(0, 120));
     console.log("[粽子] ffmpeg 启动失败: " + msg);
-    /* 文件不存在 → 触发下载，下载完再试一次 */
+    /* 文件不存在 → 触发下载，下载完再试一次。
+       换成本地新下载的 ffmpeg 后，能力缓存要重探（路径变了会自动重探）。 */
     try {
       const dl = await ensureFfmpeg();
       if (dl && dl !== exe) {
         exe = dl;
-        proc = spawn(exe, args);
+        const useReqSize2 = await ffmpegSupports(exe, "request_size");
+        proc = spawn(exe, buildArgs(useReqSize2));
         trace("ffmpeg 下载后启动", "pid=" + (proc && proc.pid));
       }
     } catch (e2) {
@@ -5537,21 +5622,31 @@ async function serveWithFfmpeg(sourceUrl, userAgent, bitRate = 128, extraHeaders
 
   SERVING.push(proc);
   let stopped = false;
-  // 90 秒还没开始服务就放弃（慢网下 ffmpeg 拉流确实要等）
-  const timer = setTimeout(() => {
-    try {
-      if (proc.kill) proc.kill();
-    } catch {}
-  }, 90000);
+  let timer = null;
 
-  try {
-    proc.wait().then(() => {
-      stopped = true;
-      clearTimeout(timer);
-      const at = SERVING.indexOf(proc);
-      if (at >= 0) SERVING.splice(at, 1);
-    });
-  } catch {}
+  /* 绑定「进程退出」回调。重试换 proc 时要重新绑一次（见下面兜底逻辑）。 */
+  const watchProc = (p) => {
+    try {
+      p.wait().then(() => {
+        stopped = true;
+        if (timer) clearTimeout(timer);
+        const at = SERVING.indexOf(p);
+        if (at >= 0) SERVING.splice(at, 1);
+      });
+    } catch {}
+  };
+  const armTimer = (p) => {
+    if (timer) clearTimeout(timer);
+    // 90 秒还没开始服务就放弃（慢网下 ffmpeg 拉流确实要等）
+    timer = setTimeout(() => {
+      try {
+        if (p && p.kill) p.kill();
+      } catch {}
+    }, 90000);
+  };
+
+  watchProc(proc);
+  armTimer(proc);
 
   /* 就绪判断：等 stderr 里出现 "Input #0"。
      ⚠️⚠️ 千万不能用 fetch 去探端口！ffmpeg 的 -listen 1 只接受**一次**连接，
@@ -5579,8 +5674,10 @@ async function serveWithFfmpeg(sourceUrl, userAgent, bitRate = 128, extraHeaders
       break;
     }
     if (stopped) {
-      const tail = errText().trim().split("\n").filter(Boolean).pop() || "";
+      const full = errText();
+      const tail = full.trim().split("\n").filter(Boolean).pop() || "";
       console.log("[粽子] ffmpeg 提前退出: " + tail.slice(0, 160));
+
       return null;
     }
     await sleep(50);
@@ -7678,6 +7775,107 @@ export async function browse({ page }) {
   const p = String(page || "");
 
   /* ============================================================
+   * 清空「我喜欢」—— 三步确认，防误点
+   * ------------------------------------------------------------
+   * 入口：我的歌单（mylists）页底部的 links
+   * ============================================================ */
+  if (p === "clear-liked") {
+    const n = readList(LIKED_KEY).length;
+    if (!n) {
+      return {
+        title: "清空「我喜欢」",
+        sections: [
+          {
+            title: "状态",
+            links: [{ title: "✅ 已经是空的", subtitle: "没有需要清空的歌曲" }],
+          },
+        ],
+      };
+    }
+    return {
+      title: "清空「我喜欢」",
+      sections: [
+        {
+          title: "⚠️ 确认",
+          links: [
+            {
+              title: "当前有 " + n + " 首 · 点这里继续",
+              subtitle: "下一步还会再问你一次，不会直接删除",
+              page: "clear-liked-2",
+            },
+            {
+              title: "算了，返回",
+              subtitle: "什么都不做",
+              page: "mylists",
+            },
+          ],
+        },
+        {
+          title: "说明",
+          links: [
+            {
+              title: "为什么要两步",
+              subtitle: "清空不能撤销，怕你误点",
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  if (p === "clear-liked-2") {
+    const n = readList(LIKED_KEY).length;
+    if (!n) {
+      return {
+        title: "清空「我喜欢」",
+        sections: [
+          { title: "状态", links: [{ title: "✅ 已经是空的", subtitle: "" }] },
+        ],
+      };
+    }
+    return {
+      title: "最后确认",
+      sections: [
+        {
+          title: "⚠️⚠️ 真的要清空？",
+          subtitle: n + " 首歌曲将全部移除，无法恢复",
+          links: [
+            {
+              title: "确认清空 " + n + " 首（不可撤销）",
+              subtitle: "点了就真的删了",
+              page: "clear-liked-do",
+            },
+            {
+              title: "取消，返回我的歌单",
+              subtitle: "保留全部收藏",
+              page: "mylists",
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  if (p === "clear-liked-do") {
+    const n = clearLikedInternal();
+    return {
+      title: "已清空",
+      sections: [
+        {
+          title: "完成",
+          links: [
+            {
+              title: "✅ 已清空 " + n + " 首",
+              subtitle: "「我喜欢」现在是空的",
+              page: "mylists",
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  /* ============================================================
    * ffmpeg 页面 —— 从首页那条提示点进来
    * ------------------------------------------------------------
    * 三种状态：已安装 / 正在下载 / 未安装
@@ -7790,10 +7988,35 @@ export async function browse({ page }) {
   // 我的歌单（自建 + 收藏）
   if (p === "mylists") {
     const pls = await playlists();
-    return {
-      title: "我的歌单",
-      sections: [{ playlists: pls, empty: "还没有歌单，去收藏或新建一个吧" }],
-    };
+    const sections = [{ playlists: pls, empty: "还没有歌单，去收藏或新建一个吧" }];
+
+    /* 播客区：和歌单放在同一个「我的」页里，省得两边来回切。
+       只列已订阅的节目；没订阅就不占位置（避免空区块）。 */
+    const shows = readList(SUBSCRIBED_SHOW_KEY).map((s) => ({ ...s, subscribed: true }));
+    if (shows.length) {
+      sections.push({
+        title: "我的播客 · " + shows.length + " 个",
+        shows: shows,
+        empty: "还没订阅播客",
+      });
+    }
+
+    /* 「清空我喜欢」入口 —— 只在真的有歌时才显示（空的就没必要出现） */
+    const likedCount = readList(LIKED_KEY).length;
+    if (likedCount > 0) {
+      sections.push({
+        title: "管理",
+        links: [
+          {
+            title: "清空「我喜欢」",
+            subtitle: "当前 " + likedCount + " 首 · 会先问你两次再清",
+            page: "clear-liked",
+          },
+        ],
+      });
+    }
+
+    return { title: "我的歌单", sections };
   }
 
   // 最近播放
