@@ -5336,6 +5336,77 @@ async function ensureFfmpeg() {
   }
 }
 
+/* ============================================================
+ * ffmpeg 静默检测（给首页用，绝不触发下载）
+ * ------------------------------------------------------------
+ * ensureFfmpeg() 是「没有就下载」，首页不能调它 ——
+ * 用户只是打开首页，不该被动拉 78MB。
+ *
+ * 这里只做一件事：问文件大小 + 试着跑一下 -version。
+ * 返回 { installed, sizeMB, path }，失败一律当作未安装。
+ * ============================================================ */
+async function ffmpegStatus() {
+  const abs = ffmpegPath();
+  const win = isWindows();
+  const dest = win ? abs.replace(/\//g, "\\") : abs;
+
+  /* ⚠️⚠️ 拿不到文件大小，也不该拿！
+     实测（2026-11-11）：MyGo 的 `proc` 对象**只暴露 errorOutput()（stderr）**，
+     stdout 完全拿不到 —— PowerShell 明明输出了 `81114624`，runOnce 里却是空串。
+     所以任何「读 shell 输出算大小」的做法在这里都不可靠。
+
+     改用 exit code 判断：只问「文件在不在」，
+     PowerShell 的 Test-Path 在文件存在时 exit 0、不存在时 exit 1。
+     exit code 不受 stdout 被吞的影响，这条路是稳的。 */
+  let exists = false;
+  try {
+    const cmd = win ? "powershell" : "/bin/sh";
+    const args = win
+      ? ["-NoProfile", "-NonInteractive", "-Command", "if(Test-Path '" + dest + "'){exit 0}else{exit 1}"]
+      : ["-c", "test -f '" + dest + "'"];
+    const r = await runOnce(cmd, args, 8000);
+    exists = r.ok;
+  } catch {}
+
+  /* 文件在，还要能跑起来才算可用（排除下载一半的残缺文件）。
+     这条同样只靠 exit code —— runOnce 已把 ENOENT 识别成 ok=false。 */
+  let runnable = false;
+  if (exists) {
+    try {
+      const probe = await runOnce(abs, ["-version"], 6000);
+      runnable = probe.ok;
+    } catch {}
+  }
+
+  /* sizeMB 拿不到真实值（stdout 被吞），所以只在确认可用后
+     按下载源的实际大小报一个「约 77 MB」，不假装是精确值。
+     UI 上写「约」而不是精确到小数点。 */
+  const installed = exists && runnable;
+
+  return {
+    installed,
+    sizeMB: installed ? 77.4 : 0, // 下载源实际 81,114,624 字节 ≈ 77.4 MB
+    path: ffmpegRelPath(),
+  };
+}
+
+/* 后台开始下载，立刻返回，不阻塞首页渲染。
+   首页只负责「点一下启动」，真正的下载靠 ensureFfmpeg() 自己跑完。 */
+let BG_DOWNLOAD_STARTED_AT = 0;
+function startFfmpegDownloadInBackground() {
+  if (DOWNLOAD_STATE === "downloading" || DOWNLOAD_PROMISE) return;
+  if (DOWNLOAD_STATE === "ready") return;
+  BG_DOWNLOAD_STARTED_AT = Date.now();
+  console.log("[粽子] 首页触发 ffmpeg 下载");
+  // 故意不 await —— 让下载在后台跑，首页马上返回
+  ensureFfmpeg()
+    .then((p) => {
+      if (p) console.log("[粽子] 后台下载 ffmpeg 完成: " + p);
+      else console.log("[粽子] 后台下载 ffmpeg 失败");
+    })
+    .catch((e) => console.log("[粽子] 后台下载异常: " + ((e && e.message) || e)));
+}
+
 
 /* ffmpeg 不读系统代理，要显式传 -http_proxy。
    MyGo 的设置项只有文本框（没有开关控件），所以一个字段表达三态：
@@ -7500,6 +7571,62 @@ export async function home() {
     console.log("[粽子] 拼好歌失败: " + ((e && e.message) || e));
   }
 
+  /* ①.⑤ ffmpeg 提示 —— 只在**没装好**时出现，装好就自动消失
+     ------------------------------------------------------------
+     为什么放首页而不是侧栏：
+       · navigation 是 plugin.json 里的静态 JSON，运行时改不了，
+         没法做到「装好就消失」
+       · 首页每次进入都重新跑 home()，天然支持条件隐藏
+         （用户已确认接受「重进首页才更新」）
+
+     ⚠️ 绝不能 await ensureFfmpeg() —— 用户只是打开首页，
+        不该被动拉 78MB。ffmpegStatus() 只做静默检测。
+     ⚠️ MyGo 页面没有颜色/样式字段，只能用 ⚠️ emoji 模拟醒目提示。 */
+  try {
+    const st = await ffmpegStatus();
+    if (!st.installed) {
+      const downloading = DOWNLOAD_STATE === "downloading" || !!DOWNLOAD_PROMISE;
+      const failed = DOWNLOAD_STATE === "failed";
+
+      if (downloading) {
+        sections.push({
+          title: "⏳ ffmpeg 正在下载",
+          links: [
+            {
+              title: "点这里查看进度",
+              subtitle: "YouTube / 播客播放需要它 · 下完重进首页即消失",
+              page: "ffmpeg",
+            },
+          ],
+        });
+      } else if (failed) {
+        sections.push({
+          title: "⚠️ ffmpeg 未就绪",
+          links: [
+            {
+              title: "上次下载失败 · 点这里重试",
+              subtitle: "YouTube / 播客播放放不了 · 也可能只是网络问题",
+              page: "ffmpeg",
+            },
+          ],
+        });
+      } else {
+        sections.push({
+          title: "⚠️ ffmpeg 未安装",
+          links: [
+            {
+              title: "点这里下载（约 78 MB）",
+              subtitle: "YouTube / 播客播放需要它 · 装好这条会自动消失",
+              page: "ffmpeg",
+            },
+          ],
+        });
+      }
+    }
+  } catch (e) {
+    console.log("[粽子] ffmpeg 状态检测失败: " + ((e && e.message) || e));
+  }
+
   /* ② 各分类。
      ⚠️ 不用 playlists 了—— 歌单只有网易云有接口，
         整个主页就全是网易云的歌单，聚合的意义没了。
@@ -7549,6 +7676,101 @@ export async function home() {
 
 export async function browse({ page }) {
   const p = String(page || "");
+
+  /* ============================================================
+   * ffmpeg 页面 —— 从首页那条提示点进来
+   * ------------------------------------------------------------
+   * 三种状态：已安装 / 正在下载 / 未安装
+   * 「开始下载」做成 links 项，点进来本身就是动作 ——
+   * 因为 MyGo 页面没有按钮控件，只能靠「点开这个链接=执行」。
+   * ============================================================ */
+  if (p === "ffmpeg") {
+    const st = await ffmpegStatus();
+    const downloading = DOWNLOAD_STATE === "downloading" || !!DOWNLOAD_PROMISE;
+
+    // 已装好
+    if (st.installed) {
+      return {
+        title: "ffmpeg 已就绪",
+        sections: [
+          {
+            title: "状态",
+            links: [
+              {
+                title: "✅ 已安装，可以正常使用",
+                subtitle: "路径: " + st.path + " · YouTube / 播客都能播了",
+              },
+            ],
+          },
+        ],
+      };
+    }
+
+    // 正在下载
+    if (downloading) {
+      return {
+        title: "ffmpeg 下载中",
+        sections: [
+          {
+            title: "⏳ 进度",
+            links: [
+              {
+                title: "正在后台下载（约 78 MB）",
+                subtitle: "拿不到实时进度，下载完重进首页那条提示就会消失",
+              },
+            ],
+          },
+          {
+            title: "说明",
+            links: [
+              {
+                title: "这一步在做什么",
+                subtitle: "正在把 ffmpeg.exe 下载到插件目录，约 78 MB，不需要管理员权限",
+              },
+            ],
+          },
+        ],
+      };
+    }
+
+    /* 未安装 / 失败 —— 这里就是「下载按钮」。
+       ⚠️ 进来这个页面时**不自动下载**：用户可能是误点。
+          要再点一次下面那条「开始下载」才真正触发。
+          但那样要往返两次，体验太差。
+          折中：进来就启动下载（用户是从首页「点这里下载」点进来的，意图明确），
+          然后立刻显示「正在下载」。
+          为了排除误点，只在**从首页点进来**时启动 —— 而 page=ffmpeg
+          本来就只有首页那一条链接会进来，所以直接启动是安全的。 */
+    startFfmpegDownloadInBackground();
+
+    return {
+      title: "开始下载 ffmpeg",
+      sections: [
+        {
+          title: "⏳ 已开始下载",
+          links: [
+            {
+              title: "正在后台下载 ffmpeg（约 78 MB）",
+              subtitle: "下载完回首页，那条提示会自动消失",
+            },
+          ],
+        },
+        {
+          title: "说明",
+          links: [
+            {
+              title: "为什么要它",
+              subtitle: "YouTube 音频和播客 m4a 需要 ffmpeg 转码成 mp3 才能播",
+            },
+            {
+              title: "可以自己准备吗",
+              subtitle: "可以。把 ffmpeg.exe 放到 " + st.path + " 就跳过下载",
+            },
+          ],
+        },
+      ],
+    };
+  }
 
   // 分类的「查看全部」—— 跟主页同一套跨平台拼单
   if (p.startsWith("cat:")) {
