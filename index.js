@@ -7881,8 +7881,10 @@ export async function browse({ page }) {
             title: "✅ 一切正常",
             links: [
               {
+                /* 路径太长会被截断，而且对用户没什么用 —— 挪到 subtitle 尾巴，
+                   截断也不心疼；主信息「能用了」放 title。 */
                 title: "已安装，可以正常使用",
-                subtitle: "YouTube / 播客都能播了 · 路径: " + st.path,
+                subtitle: "YouTube / 播客都能播了",
                 imageUrl: FFMPEG_READY_IMAGE,
               },
             ],
@@ -7910,9 +7912,12 @@ export async function browse({ page }) {
             title: "⏳ 正在下载",
             links: [
               {
-                /* 只放一条：第二条没图会变成灰色占位块。 */
-                title: "正在后台下载，不用等",
-                subtitle: "约 78 MB · 存进插件目录，不改系统环境 · 下完重进首页提示自动消失",
+                /* 只放一条：第二条没图会变成灰色占位块。
+                   ⚠️ 关键信息（约 78 MB）必须放 title ——
+                      subtitle 在窄卡片里会被截断成「约 78 M8 · TouTube/ 器...」，
+                     用户根本看不清。subtitle 只留一句短的。 */
+                title: "正在后台下载（约 78 MB）",
+                subtitle: "不用等 · 下完重进首页即消失",
                 imageUrl: FFMPEG_DOWNLOADING_IMAGE,
               },
             ],
@@ -7945,12 +7950,11 @@ export async function browse({ page }) {
           title: "⏳ 已开始下载",
           links: [
             {
-              title: "正在后台下载，不用等",
-              /* ⚠️⚠️ 一个区段里只放**一条** links！
-                 实测截图：没有 imageUrl 的 second 条目会渲染成一个巨大的
-                 灰色音符占位块（和卡片一样高），比不放还丑。
-                 所以所有要说的都压进这一条的 subtitle，不再加第二条。 */
-              subtitle: "约 78 MB · YouTube / 播客要它转 mp3 才能播 · 已有 ffmpeg.exe 可放进 " + st.path + " 跳过下载",
+              /* ⚠️⚠️ 一个区段里只放**一条** links！无图条目会渲染成灰色大块。
+                 ⚠️ 副标题在窄卡片里会被截断，所以体量、时长这类关键信息
+                    一律写进 title；subtitle 只留短句。 */
+              title: "正在后台下载（约 78 MB）",
+              subtitle: "YouTube / 播客要它转 mp3 · 已有 ffmpeg.exe 可跳过",
               imageUrl: FFMPEG_DOWNLOADING_IMAGE,
             },
           ],
