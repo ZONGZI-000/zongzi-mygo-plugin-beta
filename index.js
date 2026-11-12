@@ -5508,8 +5508,13 @@ function settingStr(key) {
 function resolveProxy() {
   /* ============================================================
    * 新方案（MyGo ≥ 0.1.23）：开关 + 地址框
-   *   useProxy  → "true" / "false"（boolean 控件保存的字符串）
+   *   proxySwitch → "" 自动（默认开） / "on" 强制开 / "off" 直连
    *   proxyUrl  → 地址，留空用 DEFAULT_PROXY
+   *
+   * ⚠️ 为什么用 select 而不是 boolean：
+   *   官方文档说 boolean 的「未设置值显示为关」，而我们的默认行为是**开代理**。
+   *   那样界面显示「关」但实际在走代理，会误导人。
+   *   用 select 把「自动（默认开启）」做成一个可见选项，界面和行为就一致了。
    *
    * ⚠️⚠️ 必须兼容老配置！
    *   旧版只有一个 proxyMode 文本框，用户可能存过：
@@ -5520,15 +5525,27 @@ function resolveProxy() {
    *   如果直接当 false 处理，用户会突然断掉代理 → YouTube 全挂。
    *   所以判断顺序是：**先看新键有没有值，都没有才回退旧键**。
    * ============================================================ */
-  const use = settingStr("useProxy").toLowerCase();
+  const sw = settingStr("proxySwitch").toLowerCase();
   const url = settingStr("proxyUrl");
 
-  // 新键有任何一个被设置过 → 走新逻辑
-  if (use !== "" || url !== "") {
-    const on = use === "true" || use === "1" || use === "on";
-    if (!on) return ""; // 开关关掉 → 直连
-    if (!url) return DEFAULT_PROXY; // 开关开着但地址留空 → 默认
+  /* 新方案：proxySwitch 三态 select
+       ""    → 自动（默认开启代理）
+       "on"  → 强制开启
+       "off" → 关闭直连
+     ⚠️ 空值也要走代理 —— 用户装完插件没动过设置时，
+        默认就该是能播 YouTube 的状态，而不是直连放不了。 */
+  if (sw !== "" || url !== "") {
+    if (sw === "off" || sw === "0" || sw === "false") return ""; // 直连
+    if (!url) return DEFAULT_PROXY;
     return url.indexOf("://") < 0 ? "http://" + url : url;
+  }
+
+  /* 兼容 beta.13 短暂用过的 useProxy 布尔开关键 */
+  const use = settingStr("useProxy").toLowerCase();
+  if (use !== "") {
+    const on = use === "true" || use === "1" || use === "on";
+    if (!on) return "";
+    return url || DEFAULT_PROXY;
   }
 
   /* 新键都没设置 → 回退旧的 proxyMode（保证升级不打断代理） */
