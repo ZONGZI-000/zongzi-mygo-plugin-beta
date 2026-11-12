@@ -7874,6 +7874,11 @@ export async function browse({ page }) {
          不重试、或转码进程句柄记在 DOWNLOAD_STATE 里）。
          不重启的话用户会以为「下载了但没用」，实际是没生效。
          所以这里显式给出「请重启客户端」的按钮级提示。 */
+      /* ⚠️ 只留一个区段。
+         之前「✅ 一切正常」和「⚠️ 还需要一步」分成两个 section，
+         第二个没有 imageUrl → 又变成一块灰色占位。
+         现在把「要重启」合并进同一张卡片：title 说结论，
+         subtitle 说下一步动作，一句话读完。 */
       return {
         title: "ffmpeg 已就绪",
         sections: [
@@ -7881,20 +7886,9 @@ export async function browse({ page }) {
             title: "✅ 一切正常",
             links: [
               {
-                /* 路径太长会被截断，而且对用户没什么用 —— 挪到 subtitle 尾巴，
-                   截断也不心疼；主信息「能用了」放 title。 */
                 title: "已安装，可以正常使用",
-                subtitle: "YouTube / 播客都能播了",
+                subtitle: "重启后生效", // 副标题越短越不容易被截
                 imageUrl: FFMPEG_READY_IMAGE,
-              },
-            ],
-          },
-          {
-            title: "⚠️ 还需要一步",
-            links: [
-              {
-                title: "请重启 MyGo 客户端",
-                subtitle: "重启后新的 ffmpeg 才会生效，YouTube / 播客才能正常播放",
               },
             ],
           },
