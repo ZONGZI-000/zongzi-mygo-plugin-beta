@@ -5528,12 +5528,13 @@ function resolveProxy() {
   const sw = settingStr("proxySwitch").toLowerCase();
   const url = settingStr("proxyUrl");
 
-  /* 新方案：proxySwitch 三态 select
-       ""    → 自动（默认开启代理）
-       "on"  → 强制开启
+  /* 新方案：proxySwitch 两项 select
+       ""    → 开启（默认）
        "off" → 关闭直连
-     ⚠️ 空值也要走代理 —— 用户装完插件没动过设置时，
-        默认就该是能播 YouTube 的状态，而不是直连放不了。 */
+     ⚠️ 空值必须走代理 —— 用户装完插件没动过设置时，
+        默认就该是能播 YouTube 的状态，而不是直连放不了。
+     ⚠️ 旧版的 "on"（曾经的「强制开启」）行为与默认完全一致，
+        保留识别只为免得老值失效。 */
   if (sw !== "" || url !== "") {
     if (sw === "off" || sw === "0" || sw === "false") return ""; // 直连
     if (!url) return DEFAULT_PROXY;
