@@ -5387,31 +5387,27 @@ async function ffmpegStatus() {
   const win = isWindows();
   const dest = win ? abs.replace(/\//g, "\\") : abs;
 
-  /* ⚠️⚠️ 拿不到文件大小，也不该拿！
-     实测（2026-11-11）：MyGo 的 `proc` 对象**只暴露 errorOutput()（stderr）**，
-     stdout 完全拿不到 —— PowerShell 明明输出了 `81114624`，runOnce 里却是空串。
-     所以任何「读 shell 输出算大小」的做法在这里都不可靠。
-
-     改用 exit code 判断：只问「文件在不在」，
-     PowerShell 的 Test-Path 在文件存在时 exit 0、不存在时 exit 1。
-     exit code 不受 stdout 被吞的影响，这条路是稳的。 */
-  let exists = false;
+  /* 先直接 spawn ffmpeg -version 探一次 —— 这比问 PowerShell 更直接：
+     「能跑起来」本身就证明「文件存在且可执行」，一步到位。
+     ⚠️ 曾经只靠 Test-Path，结果 MyGo 刚启动时 PowerShell 可能还没就绪，
+        exit code 判成「不存在」→ 首页误报「未安装」→ 用户以为要重下。
+        现在以 spawn 结果为准，Test-Path 只在 spawn 失败时做二次确认。 */
+  let runnable = false;
   try {
-    const cmd = win ? "powershell" : "/bin/sh";
-    const args = win
-      ? ["-NoProfile", "-NonInteractive", "-Command", "if(Test-Path '" + dest + "'){exit 0}else{exit 1}"]
-      : ["-c", "test -f '" + dest + "'"];
-    const r = await runOnce(cmd, args, 8000);
-    exists = r.ok;
+    const probe = await runOnce(abs, ["-version"], 8000);
+    runnable = probe.ok;
   } catch {}
 
-  /* 文件在，还要能跑起来才算可用（排除下载一半的残缺文件）。
-     这条同样只靠 exit code —— runOnce 已把 ENOENT 识别成 ok=false。 */
-  let runnable = false;
-  if (exists) {
+  let exists = runnable;
+  if (!exists) {
+    // spawn 失败 → 再用 Test-Path 确认到底是「没文件」还是「文件坏了」
     try {
-      const probe = await runOnce(abs, ["-version"], 6000);
-      runnable = probe.ok;
+      const cmd = win ? "powershell" : "/bin/sh";
+      const args = win
+        ? ["-NoProfile", "-NonInteractive", "-Command", "if(Test-Path '" + dest + "'){exit 0}else{exit 1}"]
+        : ["-c", "test -f '" + dest + "'"];
+      const r = await runOnce(cmd, args, 8000);
+      exists = r.ok;
     } catch {}
   }
 
@@ -7868,17 +7864,15 @@ export async function browse({ page }) {
 
     // 已装好
     if (st.installed) {
-      /* ⚠️ 必须提示重启。
-         刚下载完的 ffmpeg 只对**新起的进程**可见 —— 当前 MyGo 进程里
-         可能还缓存着「没有可用 ffmpeg」的旧状态（下载失败后 30 秒内
-         不重试、或转码进程句柄记在 DOWNLOAD_STATE 里）。
-         不重启的话用户会以为「下载了但没用」，实际是没生效。
-         所以这里显式给出「请重启客户端」的按钮级提示。 */
-      /* ⚠️ 只留一个区段。
-         之前「✅ 一切正常」和「⚠️ 还需要一步」分成两个 section，
-         第二个没有 imageUrl → 又变成一块灰色占位。
-         现在把「要重启」合并进同一张卡片：title 说结论，
-         subtitle 说下一步动作，一句话读完。 */
+      /* ⚠️ 不要提示重启！
+         下载完成后 ensureFfmpeg() 已经把 DOWNLOAD_STATE 置为 "ready"，
+         同一进程内后续的 stream() 直接就能用，**不需要重启客户端**。
+         （之前写「重启后生效」是我过度保守，会让用户以为装了没用。）
+
+         唯一的边角情况：如果你是在别的进程/手动放进去的 ffmpeg，
+         那本进程的 DOWNLOAD_STATE 可能还是 idle/failed ——
+         但 ensureFfmpeg() 每次都会先探测现有文件能不能跑，
+         能跑就直接置 ready，所以照样不用重启。 */
       return {
         title: "ffmpeg 已就绪",
         sections: [
@@ -7887,7 +7881,7 @@ export async function browse({ page }) {
             links: [
               {
                 title: "已安装，可以正常使用",
-                subtitle: "重启后生效", // 副标题越短越不容易被截
+                subtitle: "YouTube / 播客都能播",
                 imageUrl: FFMPEG_READY_IMAGE,
               },
             ],
