@@ -4534,7 +4534,15 @@ export async function playlists() {
     {
       id: "fav:liked",
       name: "我喜欢",
-      imageUrl: (favs[0] && ((favs[0].album && favs[0].album.imageUrl) || favs[0].artwork)) || FALLBACK_COVER,
+      /* 固定用「我喜欢」专属封面，不跟首曲封面走（用户要求统一）。
+         ⚠️ IMG_BASE / LIKED_COVER 在文件更靠后才有定义；这里是函数体，
+            运行时才求值，所以能拿到。但如果哪天有人把 playlists() 提到
+            常量初始化之前**调用**，就会撞 TDZ。为绝对安全，这里用
+            typeof 兜底，拿不到就退回 FALLBACK_COVER。 */
+      imageUrl:
+        typeof LIKED_COVER === "string" && LIKED_COVER
+          ? LIKED_COVER
+          : IMG_BASE + "zongzi-liked-cover.jpg",
       description: favs.length ? "我收藏的全部歌曲" : "还没有收藏，点心形按钮试试",
       owner: "我",
       trackCount: favs.length,
@@ -4929,7 +4937,13 @@ export async function playlist({ id }) {
     return {
       id: "fav:liked",
       name: "我喜欢",
-      imageUrl: (tracks[0] && ((tracks[0].album && tracks[0].album.imageUrl) || tracks[0].artwork)) || "",
+      /* 详情页也用同一张固定封面 —— 两个页面视觉统一，
+         不再因为首曲有没有封面而出现「一边有图一边空」。
+         （typeof 兜底同 playlists()，防 TDZ） */
+      imageUrl:
+        typeof LIKED_COVER === "string" && LIKED_COVER
+          ? LIKED_COVER
+          : IMG_BASE + "zongzi-liked-cover.jpg",
       trackCount: tracks.length,
       owner: "我",
       description: tracks.length ? "我收藏的全部歌曲" : "还没有收藏，点心形按钮试试",
@@ -5046,6 +5060,13 @@ const PODCAST_FALLBACK_COVER = IMG_BASE + "zongzi-podcast-fallback.jpg";
    ⚠️ 2026-11-11 换过一次：旧版戴小黄安全帽，用户反馈「看起来怪怪的」，
       新版去掉了帽子，改成把牌子举向镜头，构图更像「递给你」。 */
 const FFMPEG_PROMPT_IMAGE = IMG_BASE + "zongzi-ffmpeg-prompt-bust.jpg";
+
+/* 「我喜欢」专用封面：看板娘闭眼捧心，周围浮小爱心。
+   ⚠️ 这张**固定**用，不随首曲专辑封面变 ——
+      用户明确要求（2026-11-12）：「有音乐那也不用换封面」。
+      理由：收藏列表是「我的」东西，用固定形象比用某首歌的专辑图更稳，
+      也不会因为收藏/取消收藏第一首就换掉整张封面。 */
+const LIKED_COVER = IMG_BASE + "zongzi-liked-cover.jpg";
 
 /* 正在下载时的配图：看板娘抱着带进度环的平板，旁边浮着加载圆点。 */
 const FFMPEG_DOWNLOADING_IMAGE = IMG_BASE + "zongzi-ffmpeg-downloading.jpg";
