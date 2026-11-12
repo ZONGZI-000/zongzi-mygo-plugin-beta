@@ -7863,6 +7863,18 @@ export async function browse({ page }) {
   const p = String(page || "");
 
   /* ============================================================
+   * page: "home" —— 让插件页面能「跳回首页」
+   * ------------------------------------------------------------
+   * MyGo 的 links 只能跳到插件自己的 browse 页面（或内置的几个），
+   * 没法直接调用 builtin: home。所以这里把 home() 的内容原样返回，
+   * 用户点「回首页」看到的就和真首页一样，而且会重新执行 home()，
+   * ffmpeg 装好了那条提示自然就没了。
+   * ============================================================ */
+  if (p === "home") {
+    return home();
+  }
+
+  /* ============================================================
    * ffmpeg 页面 —— 从首页那条提示点进来
    * ------------------------------------------------------------
    * 三种状态：已安装 / 正在下载 / 未安装
@@ -7873,32 +7885,12 @@ export async function browse({ page }) {
     const st = await ffmpegStatus();
     const downloading = DOWNLOAD_STATE === "downloading" || !!DOWNLOAD_PROMISE;
 
-    // 已装好
+    /* 已装好 → 直接展示首页内容，不再停留在这个「下载页」。
+       用户要的是「装好了就回首页」，而不是再看一屏成功提示。
+       返回 home() 的内容，页面标题会变成「粽子音源」，
+       首页那条 ffmpeg 提示此时也会自动消失（因为已经装好了）。 */
     if (st.installed) {
-      /* ⚠️ 不要提示重启！
-         下载完成后 ensureFfmpeg() 已经把 DOWNLOAD_STATE 置为 "ready"，
-         同一进程内后续的 stream() 直接就能用，**不需要重启客户端**。
-         （之前写「重启后生效」是我过度保守，会让用户以为装了没用。）
-
-         唯一的边角情况：如果你是在别的进程/手动放进去的 ffmpeg，
-         那本进程的 DOWNLOAD_STATE 可能还是 idle/failed ——
-         但 ensureFfmpeg() 每次都会先探测现有文件能不能跑，
-         能跑就直接置 ready，所以照样不用重启。 */
-      return {
-        title: "ffmpeg 已就绪",
-        sections: [
-          {
-            title: "✅ 一切正常",
-            links: [
-              {
-                title: "已安装，可以正常使用",
-                subtitle: "YouTube / 播客都能播",
-                imageUrl: FFMPEG_READY_IMAGE,
-              },
-            ],
-          },
-        ],
-      };
+      return home();
     }
 
     // 正在下载
@@ -7911,13 +7903,14 @@ export async function browse({ page }) {
             title: "⏳ 正在下载",
             links: [
               {
-                /* 只放一条：第二条没图会变成灰色占位块。
-                   ⚠️ 关键信息（约 78 MB）必须放 title ——
-                      subtitle 在窄卡片里会被截断成「约 78 M8 · TouTube/ 器...」，
-                     用户根本看不清。subtitle 只留一句短的。 */
+                /* 点这张卡片 = 重新加载本页（MyGo 没有自动刷新，
+                   只能靠用户点一下重新请求）。
+                   page 指向自己 "ffmpeg"：重新进来会重新 ffmpegStatus()，
+                   下载已完成则直接 return home()，用户就「跳」回首页了。 */
                 title: "正在后台下载（约 78 MB）",
-                subtitle: "不用等 · 下完重进首页即消失",
+                subtitle: "点这张卡片刷新",
                 imageUrl: FFMPEG_DOWNLOADING_IMAGE,
+                page: "ffmpeg", // 指向自己 → 重新加载本页重新检测
               },
             ],
           },

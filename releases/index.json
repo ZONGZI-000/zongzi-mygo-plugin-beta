@@ -1,12 +1,17 @@
 {
   "channel": "beta",
   "latest": {
-    "version": "1.1.0-beta.19",
+    "version": "1.1.0-beta.20",
     "zip": "releases/latest/plugin-win32-amd64.zip",
-    "size": 155469,
+    "size": 155433,
     "installUrl": "https://github.com/ZONGZI-000/zongzi-mygo-plugin-beta/releases/latest/download/plugin-win32-amd64.zip"
   },
   "history": [
+    {
+      "version": "1.1.0-beta.20",
+      "zip": "releases/history/zongzi-music-1.1.0-beta.20.zip",
+      "size": 155433
+    },
     {
       "version": "1.1.0-beta.19",
       "zip": "releases/history/zongzi-music-1.1.0-beta.19.zip",
