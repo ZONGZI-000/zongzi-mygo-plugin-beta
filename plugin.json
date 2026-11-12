@@ -1,8 +1,8 @@
 {
   "id": "zongzi-music",
   "name": "粽子音源",
-  "version": "1.1.0-beta.12",
-  "minAppVersion": "0.1.8",
+  "version": "1.1.0-beta.13",
+  "minAppVersion": "0.1.23",
   "main": "index.js",
   "playback": "stream",
   "permissions": {
@@ -86,9 +86,16 @@
   },
   "settings": [
     {
-      "key": "proxyMode",
+      "key": "useProxy",
+      "label": "使用代理",
+      "type": "boolean",
+      "help": "YouTube 音频和部分平台需要走代理才能播放。关闭后所有请求直连。"
+    },
+    {
+      "key": "proxyUrl",
       "label": "代理地址",
-      "help": "留空默认 127.0.0.1:7890，不使用填 0，填写后以地址为准"
+      "type": "text",
+      "help": "留空使用默认 http://127.0.0.1:7890。支持 http:// 或 socks5:// 开头。"
     }
   ],
   "navigation": [

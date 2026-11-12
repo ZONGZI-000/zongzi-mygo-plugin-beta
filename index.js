@@ -5487,29 +5487,58 @@ function startFfmpegDownloadInBackground() {
 
 
 /* ffmpeg 不读系统代理，要显式传 -http_proxy。
-   MyGo 的设置项只有文本框（没有开关控件），所以一个字段表达三态：
 
-     留空    → 默认代理 127.0.0.1:7890
-     off     → 不用代理
-     其它    → 当作地址（没写协议会自动补 http://）
-   兼容旧的 0 / 1 写法。 */
+   代理设置从 v1.1.0-beta.13 起是「开关 + 地址框」两项：
+     useProxy  boolean  → "true" 走代理 / "false" 直连
+     proxyUrl  text     → 留空用 http://127.0.0.1:7890
+
+   ⚠️ 更早的版本只有一个 proxyMode 文本框（留空=默认 / off=关 / 其它=地址），
+      resolveProxy() 里保留了完整的老键回退逻辑，升级不会打断已有代理。 */
 const DEFAULT_PROXY = "http://127.0.0.1:7890";
 
 let PROXY_CACHE = null;
-function resolveProxy() {
-  let v = "";
+/* 读一个设置项，拿不到返回 "" */
+function settingStr(key) {
   try {
-    if (host && host.setting) v = String(host.setting("proxyMode") || "").trim();
+    if (host && host.setting) return String(host.setting(key) || "").trim();
   } catch {}
+  return "";
+}
 
-  if (!v) return DEFAULT_PROXY; // 留空 → 默认
-  const low = v.toLowerCase();
+function resolveProxy() {
+  /* ============================================================
+   * 新方案（MyGo ≥ 0.1.23）：开关 + 地址框
+   *   useProxy  → "true" / "false"（boolean 控件保存的字符串）
+   *   proxyUrl  → 地址，留空用 DEFAULT_PROXY
+   *
+   * ⚠️⚠️ 必须兼容老配置！
+   *   旧版只有一个 proxyMode 文本框，用户可能存过：
+   *     ""        → 默认代理
+   *     "off"/"0" → 不用代理
+   *     "http://..." → 自定义地址
+   *   升级后 useProxy/proxyUrl 都是「未设置」状态，
+   *   如果直接当 false 处理，用户会突然断掉代理 → YouTube 全挂。
+   *   所以判断顺序是：**先看新键有没有值，都没有才回退旧键**。
+   * ============================================================ */
+  const use = settingStr("useProxy").toLowerCase();
+  const url = settingStr("proxyUrl");
+
+  // 新键有任何一个被设置过 → 走新逻辑
+  if (use !== "" || url !== "") {
+    const on = use === "true" || use === "1" || use === "on";
+    if (!on) return ""; // 开关关掉 → 直连
+    if (!url) return DEFAULT_PROXY; // 开关开着但地址留空 → 默认
+    return url.indexOf("://") < 0 ? "http://" + url : url;
+  }
+
+  /* 新键都没设置 → 回退旧的 proxyMode（保证升级不打断代理） */
+  const legacy = settingStr("proxyMode");
+  if (!legacy) return DEFAULT_PROXY; // 留空 → 默认
+  const low = legacy.toLowerCase();
   if (low === "off" || low === "0" || low === "no" || low === "false" || low === "关") return "";
   if (low === "1" || low === "on" || low === "yes" || low === "true" || low === "开") return DEFAULT_PROXY;
 
-  // 其它值当作地址
-  if (v.indexOf("://") < 0) v = "http://" + v;
-  return v;
+  return legacy.indexOf("://") < 0 ? "http://" + legacy : legacy;
 }
 
 function proxyArg() {
