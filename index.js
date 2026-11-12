@@ -5398,9 +5398,10 @@ async function ffmpegStatus() {
     runnable = probe.ok;
   } catch {}
 
-  let exists = runnable;
+  /* exists 单独表示「文件在不在这块磁盘上」，和 runnable（能不能跑）分开看。 */
+  let exists = runnable; // spawn 成功本身已经证明文件存在
   if (!exists) {
-    // spawn 失败 → 再用 Test-Path 确认到底是「没文件」还是「文件坏了」
+    // spawn 失败 → 用 Test-Path 区分「没文件」和「有文件但跑不起来」
     try {
       const cmd = win ? "powershell" : "/bin/sh";
       const args = win
@@ -5408,13 +5409,23 @@ async function ffmpegStatus() {
         : ["-c", "test -f '" + dest + "'"];
       const r = await runOnce(cmd, args, 8000);
       exists = r.ok;
+      trace("ffmpeg Test-Path 兜底", "exists=" + exists);
     } catch {}
   }
 
-  /* sizeMB 拿不到真实值（stdout 被吞），所以只在确认可用后
-     按下载源的实际大小报一个「约 77 MB」，不假装是精确值。
-     UI 上写「约」而不是精确到小数点。 */
-  const installed = exists && runnable;
+  /* ⚠️⚠️ 判定用 OR，不是 AND！
+     踩过的坑（2026-11-12）：这里原本写的是 `exists && runnable`，
+     而 exists 在 spawn 失败后才由 Test-Path 补上 —— 也就是说
+     runnable=false 时，即使 Test-Path 明确说文件在，AND 依旧得 false。
+     结果：状态页（spawn 成功）显示「已安装」，首页（spawn 偶发超时/慢启动）
+     显示「未安装」，同一份文件两处结论打架。
+
+     正确语义是「有文件就能用」：
+       · spawn 成功（runnable）→ 文件在且可执行，最可信
+       · spawn 失败但 Test-Path 说文件在（exists）→ 文件存在，
+         可能是 ffmpeg 首次启动慢/被杀进程，不该判定为「没装」
+     所以用 OR。真·文件不存在时两者都是 false，照样报未安装。 */
+  const installed = runnable || exists;
 
   return {
     installed,
