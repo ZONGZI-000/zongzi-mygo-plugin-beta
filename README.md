@@ -2,7 +2,7 @@
 
 ![粽子音源](assets/kanban/zongzi-ad-banner.jpg)
 
-聚合多个音乐源的 [MyGo](https://github.com/egoist/mygo-music) 音源插件。跨平台源聚合、相互兜底，主流 App 找不到的曲目也能在这里补齐。
+聚合多个音乐源的 [MyGo](https://github.com/egoist/mygo-music) 音源插件。
 
 ## 功能
 
@@ -25,13 +25,6 @@
 - **播客小镇 (podtown.xyz)** — 266 个中文播客，自带 RSS
 - **SomaFM / Radio France** — 直播电台
 
-## 播放相关
-
-MyGo 的解码器限制很死，踩过不少：
-
-- 只认 `mp3 / flac / ogg / wav / m4a / aac`，传别的会被当 mp3 解码后报错
-- mp3 解码器（`hajimehoshi/go-mp3`）**只支持 MPEG Layer III**，Layer I/II 会报 `only layer3 is supported`
-- **不支持 HE-AAC (SBR+PS)** → 播客 m4a 必须用 ffmpeg 转 mp3
 
 ## 安装
 
