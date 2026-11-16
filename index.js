@@ -2763,6 +2763,17 @@ const ARTIST_VARIANT_RE =
 const ARTIST_LIVE_ALBUM_RE =
   /梦想的声音|夢想的聲音|谁是大歌神|誰是大歌神|我是歌手|我想和你唱|歌手[·・]|天赐的声音|天賜的聲音|蒙面唱将|蒙面唱將|我们的歌|我們的歌|音综|音乐大师课|天生是优我|天生是優我|跨界歌王|最美和声|最美和聲|中国好声音|中國好聲音|快乐男声|快樂男聲|超级女声|超級女聲|欢唱嘉年华|歡唱嘉年華|巡回演唱会|巡迴演唱會|世界巡回|世界巡迴|跨年演唱会|跨年演唱會|跨年晚会|跨年晚會|演唱会|演唱會|音乐节|音樂節|歌友会|歌友會|颁奖|頒獎|典礼|典禮|第\d+期|巡演/i;
 
+/* 【翻唱企划专辑】—— 整张专都是翻唱别人的歌，但歌手字段写的是本人，
+   originCoverType 是 0（网易不标），歌名也不带任何标记 → 所有逐曲判据都失效。
+   唯一能认的依据是**专辑名**这类企划。
+   实测（2026-11-16 用户第三次反馈）：林俊杰 的 iTunes Session（2010）
+   里是《I Just Can't Stop Loving You》《Bye Bye Bye》《Better Man》这些英文原唱翻唱，
+   专辑名就叫 iTunes Session，混在歌手页第 1-6 位。
+   ⚠️ 只认「翻唱企划」性质的专辑名，不能见 Session 就删 ——
+      《Live Session》《Studio Session》多半也是现场/录音室版本，已在上面覆盖。 */
+const ARTIST_COVER_ALBUM_RE =
+  /^\s*(iTunes\s*Session|Spotify\s*Sessions?|Spotify\s*Singles?|Apple\s*Music\s*(Home\s*Session|Live)|A\s*COVER\s*SESSION|Cover\s*Session|翻唱专辑|翻唱專輯|翻唱特辑|翻唱特輯|致敬|致敬专辑|致敬專輯|Tribute|Reimagined|Re-?imagined|Covers?)\s*$/i;
+
 function cleanArtistSongList(songs) {
   const groups = new Map(); // 归一化歌名 → { best, bestScore, allVariant }
   const order = [];
@@ -2777,6 +2788,13 @@ function cleanArtistSongList(songs) {
        用户听到的根本不是这个歌手的录音室版本（2026-11-16 报告）。 */
     const isLiveAlbum = !!albName && ARTIST_LIVE_ALBUM_RE.test(albName);
     if (isLiveAlbum) continue; // 直接丢，不参与分组打分
+    /* 翻唱企划专辑（iTunes Session 等）整张都是翻唱别人的歌，直接丢。
+       ⚠️ 这类条目**所有逐曲判据都失效**：歌手字段是本人、originCoverType=0、
+          歌名不带「翻唱」——只有专辑名能认出来（2026-11-16 第三次反馈）。 */
+    if (albName && ARTIST_COVER_ALBUM_RE.test(albName)) {
+      console.log("[粽子] 跳过翻唱企划专辑条目: " + nm + " ← " + albName);
+      continue;
+    }
     const key = normTitle(nm).toLowerCase();
     if (!key) continue;
     const dur = Number(s0.duration) || 0;
@@ -3880,6 +3898,12 @@ export async function search({ query, kind, offset }) {
        标题里没有覆盖词，但明显不是录音室原版，排在正版后面挤占了位置。
        ⚠️ 只认「括号里带『版/version』」—— 避免误伤《这一版》《特别版》这类专辑名。 */
     if (/[(（\[【][^)）\]】]*(版|version)[^)）\]】]*[)）\]】]/i.test(raw)) return true;
+    /* 翻唱企划专辑 / 综艺现场专辑：从**专辑名**认（歌名和歌手字段都看不出来）。
+       实测（2026-11-16 用户第三次反馈）：林俊杰 的 iTunes Session
+       里全是英文翻唱，歌名不带任何标记、originCoverType=0。 */
+    const albName = String((t.album && t.album.name) || "");
+    if (albName && (ARTIST_COVER_ALBUM_RE.test(albName) || ARTIST_LIVE_ALBUM_RE.test(albName)))
+      return true;
     /* 串烧/联唱：标题里用 + 、/ 顿号 并列好几首歌名。
        实测（2026-11-16）搜「晴天 周杰伦」QQ 第 2 条是
        《志明与春娇+听妈妈的话+干杯+晴天+离开地球表面+双截棍 (2013小巨蛋演唱会第三场)》
