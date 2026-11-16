@@ -3,14 +3,14 @@
   "latest": {
     "version": "1.1.1",
     "zip": "releases/latest/plugin-win32-amd64.zip",
-    "size": 158680,
+    "size": 158405,
     "installUrl": "https://github.com/ZONGZI-000/zongzi-mygo-plugin-stable/releases/latest/download/plugin-win32-amd64.zip"
   },
   "history": [
     {
       "version": "1.1.1",
       "zip": "releases/history/zongzi-music-1.1.1.zip",
-      "size": 158680
+      "size": 158405
     },
     {
       "version": "1.1.0-beta.20",
