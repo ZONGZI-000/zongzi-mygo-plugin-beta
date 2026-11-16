@@ -154,7 +154,18 @@ async function probeStream(url, headers) {
 async function playOne(label, id) {
   let st;
   try { st = await plugin.stream({ id, quality: "high" }); }
-  catch (e) { console.log("    ✗ " + label + " 取流失败: " + String(e && e.message).slice(0, 70)); fail++; return false; }
+  catch (e) {
+    const msg = String((e && e.message) || "");
+    /* 【VIP 歌被拒绝 = 预期行为，不是失败】
+       QQ 免登录对 VIP 歌（payplay=1）只给 30-60 秒试听片段，
+       插件现在会主动拒绝而不是播半截（见 index.js qq: 分支的时长校验）。
+       如果连 YouTube 兜底也找不到，抛这条错误是**正确**的。 */
+    if (/VIP 歌曲仅提供试听片段/.test(msg)) {
+      console.log("    ✓ " + label + " 已拦截 VIP 试听片段（预期行为）");
+      pass++; return true;
+    }
+    console.log("    ✗ " + label + " 取流失败: " + msg.slice(0, 70)); fail++; return false;
+  }
   if (!st || !st.url) { console.log("    ✗ " + label + " 取流为空"); fail++; return false; }
   const p = await probeStream(st.url, st.headers);
   if (p.ok) { console.log("    ✓ " + label + " 可播 [" + p.why + "]"); pass++; return true; }

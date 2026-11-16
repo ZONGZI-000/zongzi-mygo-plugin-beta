@@ -932,6 +932,30 @@ async function checkAudioUrl(url, timeoutMs = 6000) {
   }
 }
 
+/* 用 HEAD 的 content-length 粗估音频时长（秒），用来识别「试听片段」。
+   ⚠️ 为什么需要：QQ 免登录对 VIP 歌（payplay=1）只返回**试听片段**，
+      实测（2026-11-16）周杰伦《晴天》元数据 269 秒，purl 只有 960887 字节
+      ≈ 48 秒。不校验就会把 48 秒短片当成整首歌播出去 —— 用户听到「播一半就没了」。
+   按 128kbps 估：1 秒 ≈ 16000 字节。返回 0 表示拿不到（调用方放行，别误杀）。 */
+async function probeAudioSeconds(url, timeoutMs = 6000) {
+  try {
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+    const res = await fetch(url, {
+      method: "HEAD",
+      headers: { "User-Agent": uaDesktop() },
+      signal: ctrl.signal,
+      redirect: "follow",
+    });
+    clearTimeout(timer);
+    const len = Number(res.headers.get("content-length") || 0);
+    if (!len || !isFinite(len)) return 0;
+    return Math.round(len / 16000);
+  } catch {
+    return 0;
+  }
+}
+
 /* ============================================================
  * B 站（Bilibili）
  * ------------------------------------------------------------
@@ -1244,10 +1268,17 @@ async function qqSearch(query, n = 20) {
     if (!mid) return null;
     const albumMid = (s.albummid || "").trim();
     qqMedia.set(mid, media || mid);
+    /* ⚠️ VIP 判定：payplay=1 或 payinfo=1 就是付费曲。
+       实测（2026-11-16）：周杰伦《晴天》payplay:1 → 取流 vkey 只给 48 秒试听片段
+       （960887 字节 / 元数据 269 秒），免登录拿不到完整音频。
+       标记 _vip 后：搜索层决定要不要展示（能兜底才展示）、播放层校验时长防半截。 */
+    const pay = s.pay || {};
+    const isVip = Number(pay.payplay) === 1 || Number(pay.payinfo) === 1;
     return {
       id: "qq:" + mid,
       _qqMid: mid,
       _qqMedia: media,
+      _vip: isVip || undefined,
       name: String(s.songname || s.name || "").trim(),
       artists: (s.singer || []).map((x) => ({ name: x.name || "" })),
       album: s.albumname ? { name: s.albumname, imageUrl: qqCover(albumMid) } : undefined,
@@ -3367,6 +3398,18 @@ export async function search({ query, kind, offset }) {
     //    和 YouTube 结果混在一起，用户点到就是「同名但不是本人」的歌。
     if (dropMainland && (t.provider === "netease" || t.provider === "kuwo" || t.provider === "qq")) return;
 
+    /* 【VIP 歌：没登录会员 —— 不直接删，交给列表末尾统一判定】
+       实测（2026-11-16）：QQ 对 VIP 歌（payplay=1）免登录只给 30-60 秒试听片段，
+       周杰伦《晴天》(269s) 只拿到 48 秒。核心问题不是「VIP 不能播」，
+       而是「拿到的是残片却当成整首播」。
+       这里只打标记，等下面所有源都进完 pool，再按「有没有可兜底的同曲」决定去留：
+         · YouTube/B站 有同曲 → 保留（播放时 qq: 分支自动转 YouTube 完整版）
+         · 一条兜底都没有 → 删掉（点了只会听到半截，不如不给）
+       这样用户搜周杰伦仍能看到《晴天》，点进去放的是完整版。 */
+    if (t._vip) {
+      t._vipNoFallback = true; // 先假设没兜底，后面有同曲才撤销
+    }
+
     /* 定点下架曲目（歌手本人正常在售，只有几首歌被封）：
        歌名命中清单 + 歌手命中 → 打标记，打分时 YouTube/B站 加分、内地压分。
        ⚠️ 歌手字段经常残缺（B站是 UP 主名、YouTube 是频道名），
@@ -3739,7 +3782,40 @@ export async function search({ query, kind, offset }) {
       artistTrusted: t.provider !== "youtube" && t.provider !== "bilibili",
     });
   }
-  return { tracks, more: false };
+  /* 【VIP 歌去留判定】—— 见上面 _vipNoFallback 的说明。
+     所有源的条目都进完 pool 了，现在能看出「这首 VIP 歌有没有可兜底的同曲」：
+       同 pool 里存在歌名+歌手都对得上的 YouTube/B站条目 → 保留（播放自动转完整版）
+       一条都没有 → 删掉（没会员只能放 48 秒残片，不如不给）
+     歌名比对用 normTitle（去掉括号/Live 标记）—— 兜底时 YouTube 本来就选同曲版本，
+     这里宽松一点没关系，只要大方向对得上就认为「能兜底」。 */
+  const finalTracks = tracks.filter((t) => {
+    if (!t._vipNoFallback) return true;
+    const wantKey = normTitle(t.name);
+    const wantArtist = String((t.artists && t.artists[0] && t.artists[0].name) || "").trim();
+    const canFallback = tracks.some((o) => {
+      if (o === t) return false;
+      if (o.provider !== "youtube" && o.provider !== "bilibili") return false;
+      const oKey = normTitle(o.name);
+      if (!wantKey || !oKey) return false;
+      const rawO = String(o._rawTitle || o.name || "");
+      const nameHit =
+        oKey.indexOf(wantKey) >= 0 || wantKey.indexOf(oKey) >= 0 ||
+        rawO.toLowerCase().indexOf(String(t.name || "").toLowerCase()) >= 0;
+      if (!nameHit) return false;
+      // 歌手能对上（YouTube 的 artist 常是频道名，所以只做「包含」弱校验）
+      const oArtist = String((o.artists && o.artists[0] && o.artists[0].name) || "");
+      const artistHit = !wantArtist || !oArtist || oArtist.indexOf(wantArtist) >= 0 ||
+        wantArtist.indexOf(oArtist) >= 0 || rawO.indexOf(wantArtist) >= 0;
+      return artistHit;
+    });
+    if (!canFallback) {
+      console.log("[粽子] 剔除 VIP 歌（无兜底同曲）: " + String(t.name || "").slice(0, 24));
+      return false;
+    }
+    return true;
+  });
+  for (const t of finalTracks) delete t._vipNoFallback;
+  return { tracks: finalTracks, more: false };
 }
 
 // ------------------------- 歌词 -------------------------
@@ -6438,10 +6514,30 @@ async function _streamInner({ id, quality }) {
   if (s.startsWith("qq:")) {
     const mid = s.slice(3);
     const media = qqMedia.get(mid) || mid;
+    const meta = trackMeta.get(String(id));
     try {
       const url = await qqStreamUrl(mid, media);
-      if (url) return { url, type: "mp3" };
-    } catch {}
+      if (url) {
+        /* ⚠️ 关键校验：QQ 对 VIP 歌只给试听片段（约 30-60 秒）。
+           拿元数据时长对比实际字节：短太多就是试听片，不能当整首播。
+           宁可转 YouTube 兜底，也别让用户听半截歌。 */
+        const wantSec = Math.round((Number(meta && meta.duration) || 0) / 1000);
+        if (wantSec >= 60) {
+          const realSec = await probeAudioSeconds(url);
+          if (realSec > 0 && realSec < wantSec * 0.6) {
+            console.log(
+              "[粽子] QQ 试听片段（" + realSec + "s / 应 " + wantSec + "s），转 YouTube 兜底"
+            );
+            const alt = await fallbackToYoutube(id);
+            if (alt) return alt;
+            throw fail("unavailable", "VIP 歌曲仅提供试听片段，需登录会员");
+          }
+        }
+        return { url, type: "mp3" };
+      }
+    } catch (e) {
+      if (e && e.code) throw e; // 上面主动抛的 fail 直接透出
+    }
     // QQ 拿不到（VIP/下架）→ 跨平台兜底
     const alt = await fallbackToYoutube(id);
     if (alt) return alt;
