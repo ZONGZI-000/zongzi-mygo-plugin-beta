@@ -2718,6 +2718,59 @@ async function neArtistHotSongs(artistId, maxTotal = 300) {
   return out;
 }
 
+/* 把「歌手全部曲目」整理成干净的一串：去重、去变体（Live/伴奏/翻唱）。
+   ⚠️⚠️ 为什么必须抽成公用函数：
+     搜索歌手名时走过这套（见 detectNeteaseArtist 那段），但**点进歌手页**时
+     走的是 songsOfArtist()，当时只做了「取前 50 首 + 原样返回」——
+     于是歌手页里会冒出《一千年以后 (伴奏)》，用户点了以为是原唱（2026-11-16 报告）。
+     两处必须用同一套规则，不然「搜到的」和「点进去的」两套结果对不上。
+
+   规则（按优先级）：
+     ① 按归一化歌名分组，每组只留最干净的那版
+        （非 Live/伴奏/串烧 > 有专辑名 > 时长合理 > 热度高）
+     ② 丢掉纯变体组（整组都是 Live/伴奏/翻唱的，说明这人只有现场版，留着没意义）
+     ③ 保持原顺序（歌手目录本身按热度排好了） */
+const ARTIST_VARIANT_RE =
+  /live|现场|現場|演唱会|演唱會|巡迴|巡回|tour|伴奏|纯音乐|純音樂|instrumental|karaoke|ktv|remix|dj|串烧|串燒|medley|钢琴|鋼琴|吉他|鼓|教程|翻唱|cover/i;
+
+function cleanArtistSongList(songs) {
+  const groups = new Map(); // 归一化歌名 → { best, bestScore, allVariant }
+  const order = [];
+  for (const s0 of songs || []) {
+    if (isAudiobook(s0.name, (s0.artists || [])[0] && (s0.artists || [])[0].name, s0.album && s0.album.name))
+      continue;
+    const nm = String(s0.name || "");
+    if (!nm) continue;
+    const key = normTitle(nm).toLowerCase();
+    if (!key) continue;
+    const isVariant = ARTIST_VARIANT_RE.test(nm);
+    const hasAlbum = !!(s0.album && s0.album.name);
+    const pop = Number(s0.popularity) || 0;
+    const dur = Number(s0.duration) || 0;
+    let sc = 0;
+    if (!isVariant) sc += 1000;
+    if (hasAlbum) sc += 200;
+    if (dur >= 120000 && dur <= 420000) sc += 100;
+    sc += Math.min(pop, 100);
+    if (!groups.has(key)) {
+      groups.set(key, { best: s0, bestScore: sc, allVariant: isVariant });
+      order.push(key);
+    } else {
+      const g = groups.get(key);
+      if (!isVariant) g.allVariant = false; // 只要有一版是干净的，这组就不算纯变体
+      if (sc > g.bestScore) {
+        g.best = s0;
+        g.bestScore = sc;
+      }
+    }
+  }
+  /* ② 纯变体组（整组都是 Live/伴奏/翻唱）丢掉 */
+  return order
+    .map((k) => groups.get(k))
+    .filter((g) => !g.allVariant)
+    .map((g) => g.best);
+}
+
 /* 拉取某位歌手的正版专辑目录（网易云 /api/artist/albums） */
 async function neArtistAlbums(artistId) {
   try {
@@ -3167,40 +3220,9 @@ export async function search({ query, kind, offset }) {
         if (singer) {
           const hot = await neArtistHotSongs(singer.id, 600);
           if (hot.length >= 5) {
-            /* 歌手目录拿到的是「这个人的全部曲目」，同一首歌会有很多版本：
-               录音室版 + Live + 伴奏 + 串烧 + 综艺现场，还有跨专辑重复收录。
-               这里做三件事：
-                 ① 按「归一化歌名」去重，每组只留最干净的那版
-                    （优先级：非 Live/伴奏/串烧 > 有专辑名 > 时长合理 > 热度高）
-                 ② 丢掉纯变体（整组都是 Live/伴奏/串烧的，说明这人只有现场版，留着也没用）
-                 ③ 保持原顺序（歌手目录本身按热度排，已经很合理） */
-            const VARIANT_RE = /live|现场|現場|演唱会|演唱會|巡迴|巡回|tour|伴奏|纯音乐|純音樂|instrumental|karaoke|ktv|remix|dj|串烧|串燒|medley|钢琴|鋼琴|吉他|鼓|教程|翻唱|cover/i;
-            const groups = new Map();   // 归一化歌名 → { best, bestScore }
-            const order = [];           // 保持首次出现的顺序
-            for (const s0 of hot) {
-              if (isAudiobook(s0.name, (s0.artists || [])[0] && (s0.artists || [])[0].name, s0.album && s0.album.name)) continue;
-              const nm = String(s0.name || "");
-              if (!nm) continue;
-              // 归一化：去括号后缀、去标点，用于判定「是不是同一首歌」
-              const key = normTitle(nm).toLowerCase();
-              if (!key) continue;
-              const isVariant = VARIANT_RE.test(nm);
-              const hasAlbum = !!(s0.album && s0.album.name);
-              const pop = Number(s0.popularity) || 0;
-              const dur = Number(s0.duration) || 0;
-              let sc = 0;
-              if (!isVariant) sc += 1000;
-              if (hasAlbum) sc += 200;
-              if (dur >= 120000 && dur <= 420000) sc += 100;
-              sc += Math.min(pop, 100);
-              if (!groups.has(key)) {
-                groups.set(key, { best: s0, bestScore: sc });
-                order.push(key);
-              } else if (sc > groups.get(key).bestScore) {
-                groups.set(key, { best: s0, bestScore: sc });
-              }
-            }
-            const picked = order.map((k) => groups.get(k).best);
+            /* 去重 + 去变体（Live/伴奏/翻唱）—— 规则统一在 cleanArtistSongList 里，
+               歌手页也用同一个函数，保证「搜到的」和「点进去的」是同一套结果。 */
+            const picked = cleanArtistSongList(hot);
             console.log("[粽子] 「" + q + "」走歌手热歌目录：" + hot.length + " 首 → 去重后 " + picked.length + " 首");
             return picked.map(neSongToTrack);
           }
@@ -4836,6 +4858,22 @@ async function songsOfAlbum(albumId, albumName, artistName) {
 }
 
 async function songsOfArtist(artistId, artistName) {
+  /* ⚠️⚠️ 歌手页必须和搜索走同一套数据 + 同一套过滤。
+     旧实现是「关键词搜歌手名取前 50 首，原样返回」——两个毛病：
+       ① 只 50 首（周杰伦实际有 589 首，大半拉不到）；
+       ② 完全不过滤，于是《一千年以后 (伴奏)》这种变体直接进歌手页，
+          用户点开以为是原唱（2026-11-16 报的 bug）。
+     现在改成：优先走官方歌手目录（带专辑名、干净、能分页拉全）→
+     再用 cleanArtistSongList 做和搜索页完全一样的去重/去变体。 */
+  let hot = [];
+  try {
+    hot = await neArtistHotSongs(artistId, 600);
+  } catch {}
+  if (hot.length >= 5) {
+    const picked = cleanArtistSongList(hot);
+    if (picked.length) return picked.map(neSongToTrack);
+  }
+  // 目录拿不到（冷门/下架歌手）→ 退回关键词召回，但至少只认这位歌手的作品
   const r = await neSearchTyped(artistName, 1, 50);
   const songs = r.songs || [];
   const hit = songs.filter(
