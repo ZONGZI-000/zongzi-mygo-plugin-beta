@@ -7956,14 +7956,14 @@ export async function home() {
      ⚠️ 不能用 tracks —— MyGo 里 tracks 是写死的单列列表（每行 54px），
         插件改不了；而 Playlists 走 ui.Grid().Columns()，是真网格。
      每张卡片点进去调 playlist({id:"mix:<key>:<slot>"})，拿到的就是这一单的歌。
-     ⚠️ 7 单并发跑，不然串行要 20 秒。 */
-  const SLOTS_PER_CAT = 7;
+     ⚠️ 9 单并发跑，不然串行要 20 秒。 */
+  const SLOTS_PER_CAT = 9;
   const catJobs = [];
   HOME_CATS.forEach((c) => {
     for (let s = 0; s < SLOTS_PER_CAT; s++) catJobs.push(catMix(c, s).catch(() => []));
   });
   const catMixes = await Promise.all(catJobs);
-  const SLOT_LABEL = ["", " · 第二单", " · 第三单", " · 第四单", " · 第五单", " · 第六单", " · 第七单"];
+  const SLOT_LABEL = ["", " · 第二单", " · 第三单", " · 第四单", " · 第五单", " · 第六单", " · 第七单", " · 第八单", " · 第九单"];
   HOME_CATS.forEach((c, i) => {
     const pls = [];
     /* ⚠️⚠️ 封面必须回落到 FALLBACK_COVER！
