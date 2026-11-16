@@ -2355,6 +2355,28 @@ function scoreTrack(t, query) {
   if (t._cover === 1) score += 120; // 原唱
   else if (t._cover === 2) score -= 130; // 翻唱
   else if (t._cover === 3) score -= 100; // 伴奏/remix/其他版本
+
+  /* ⑥-2 标题级变体判据 —— 给**没有 _cover 字段的源**（酷我/QQ/B站/YouTube）兜底。
+     酷我不返回 originCoverType，于是《美人鱼 (cover周杰伦)》和原版同分，
+     实测排到了第 10 条附近（2026-11-16 用户反馈「混进去翻唱」）。
+     ⚠️ 用原始标题判，name 已被 cleanSongTitle 洗掉括号里的标记。 */
+  if (t.provider !== "netease") {
+    const rawForVariant = String(t._rawTitle || t.name || "");
+    /* ⚠️ 分值要足够大才压得住 —— Live/翻唱条目通常也有专辑名(+200)和热度加分，
+       扣太少等于没扣。实测（2026-11-16）《美人鱼 (Live)》扣 90 后仍排第 5，
+       因为它在 QQ 侧同样是「原唱」(+120)。现在按「变体 → 排在正版之后」为准绳取值。 */
+    if (COVER_RE.test(rawForVariant)) score -= 400; // 翻唱/伴奏/钢琴版等
+    else if (/live|现场|現場|演唱会|演唱會|巡迴|巡回/i.test(rawForVariant)) score -= 350; // Live 版
+    /* 非原版的其他版本（深情版/变速版/重置版/dj版…）——标题带「版」但不是原版。
+       实测《美人鱼 (深情版|Single Version)》165s 排到第 2，把正版之后的位置都占了。 */
+    else if (/[(（\[【][^)）\]】]*(版|version)[^)）\]】]*[)）\]】]/i.test(rawForVariant)) score -= 250;
+  }
+
+  /* ⑥-3 超短片段（<60 秒）沉底。专辑序曲/过场/试听切条，
+     出现在搜索第一屏很干扰（用户 2026-11-16 反馈）。
+     不删除：这些在歌手页/专辑页里是正式编排，只是搜索排序该靠后。 */
+  const durSec = Math.round((Number(t.duration) || 0) / 1000);
+  if (durSec > 0 && durSec < 60) score -= 150;
   // 热度：同分时热门优先（只做微调，不盖过匹配度）
   if (t._pop >= 90) score += 25;
   else if (t._pop >= 70) score += 12;
@@ -2733,6 +2755,14 @@ async function neArtistHotSongs(artistId, maxTotal = 300) {
 const ARTIST_VARIANT_RE =
   /live|现场|現場|演唱会|演唱會|巡迴|巡回|tour|伴奏|纯音乐|純音樂|instrumental|karaoke|ktv|remix|dj|串烧|串燒|medley|钢琴|鋼琴|吉他|鼓|教程|翻唱|cover/i;
 
+/* 综艺节目 / 现场演出 的专辑名特征 —— 这类录音不是歌手的正式作品：
+   《梦想的声音》《谁是大歌神》《我是歌手》《我想和你唱》是**素人/嘉宾翻唱**，
+   跨年演唱会/巡回演唱会 是现场版。它们会被网易挂在歌手名下，
+   但用户点进去听到的是别人唱他的歌（2026-11-16 报告「混进去翻唱」）。
+   ⚠️ 只匹配专辑名，不匹配歌名 —— 歌名里出现「梦想」之类不一定是这类节目。 */
+const ARTIST_LIVE_ALBUM_RE =
+  /梦想的声音|夢想的聲音|谁是大歌神|誰是大歌神|我是歌手|我想和你唱|歌手[·・]|天赐的声音|天賜的聲音|蒙面唱将|蒙面唱將|我们的歌|我們的歌|音综|音乐大师课|天生是优我|天生是優我|跨界歌王|最美和声|最美和聲|中国好声音|中國好聲音|快乐男声|快樂男聲|超级女声|超級女聲|欢唱嘉年华|歡唱嘉年華|巡回演唱会|巡迴演唱會|世界巡回|世界巡迴|跨年演唱会|跨年演唱會|跨年晚会|跨年晚會|演唱会|演唱會|音乐节|音樂節|歌友会|歌友會|颁奖|頒獎|典礼|典禮|第\d+期|巡演/i;
+
 function cleanArtistSongList(songs) {
   const groups = new Map(); // 归一化歌名 → { best, bestScore, allVariant }
   const order = [];
@@ -2741,16 +2771,28 @@ function cleanArtistSongList(songs) {
       continue;
     const nm = String(s0.name || "");
     if (!nm) continue;
+    const albName = String((s0.album && s0.album.name) || "");
+    /* 综艺/现场演出的录音 —— 专辑名对得上就当变体处理。
+       《梦想的声音》《谁是大歌神》是素人翻唱，《跨年演唱会》是现场，
+       用户听到的根本不是这个歌手的录音室版本（2026-11-16 报告）。 */
+    const isLiveAlbum = !!albName && ARTIST_LIVE_ALBUM_RE.test(albName);
+    if (isLiveAlbum) continue; // 直接丢，不参与分组打分
     const key = normTitle(nm).toLowerCase();
     if (!key) continue;
-    const isVariant = ARTIST_VARIANT_RE.test(nm);
-    const hasAlbum = !!(s0.album && s0.album.name);
-    const pop = Number(s0.popularity) || 0;
     const dur = Number(s0.duration) || 0;
+    const isVariant = ARTIST_VARIANT_RE.test(nm);
+    const hasAlbum = !!albName;
+    const pop = Number(s0.popularity) || 0;
+    /* 超短条目（<60 秒）：专辑序曲/过场段/试听切条。
+       ⚠️ 不能直接删 —— 《编号89757》里的《一千年以前》(64s)、《第二天堂》里的
+          《一开始》(68s)、《和自己对话》里的《序曲：调音》(71s) 都是**正式编排**，
+          删掉这张专辑就残了。
+         但它们在搜索列表里排第一屏很干扰（用户 2026-11-16 反馈），所以重降权。 */
     let sc = 0;
     if (!isVariant) sc += 1000;
     if (hasAlbum) sc += 200;
     if (dur >= 120000 && dur <= 420000) sc += 100;
+    else if (dur > 0 && dur < 60000) sc -= 600; // 短片段沉底
     sc += Math.min(pop, 100);
     if (!groups.has(key)) {
       groups.set(key, { best: s0, bestScore: sc, allVariant: isVariant });
@@ -3401,6 +3443,13 @@ export async function search({ query, kind, offset }) {
   const seen = new Map();
   const add = (t) => {
     if (!t || !t.id || !t.name) return;
+    /* ⚠️ 统一补 _rawTitle —— 只有 YouTube 那条路径自己设了它，
+       酷我/QQ/网易的 track 都没有，于是 scoreTrack 里「靠原始标题识别
+       Live/演唱会/翻唱」的判据对这些源完全失效。
+       实测（2026-11-16）：酷我《美人鱼 (cover周杰伦)》《飞鸟和蝉 (Live)》
+       和原版同分，稳稳压在正常歌中间 —— 用户看到就是「混进来翻唱」。
+       这里在入口处补一次，所有下游（打分/去重/变体识别）都有原始标题可用。 */
+    if (!t._rawTitle) t._rawTitle = String(t.name);
     /* 非音乐内容（访谈/新闻/八卦/红毯…）直接扔掉，不占列表位置。
        ⚠️ 用**原始标题**判断（_rawTitle）：name 已被 cleanSongTitle 洗过，
          那些「访谈」「揭秘」关键词正好被洗掉了，用 name 判会漏。 */
@@ -3773,15 +3822,25 @@ export async function search({ query, kind, offset }) {
      同档位内短歌在前 → 满足「按长度排序」，同时保住相关度。 */
   const scored = pool.map((t) => ({ t, score: scoreTrack(t, q) }));
   scored.sort((a, b) => {
-    const ba = Math.round(a.score / 100);
-    const bb = Math.round(b.score / 100);
-    if (ba !== bb) return bb - ba;              // ① 相关度档位高的在前
     const da = a.t.duration || 0;
     const db = b.t.duration || 0;
-    if (da > 0 && db > 0 && da !== db) return da - db; // ② 同档位内：短的在前
-    if (da > 0 && db === 0) return -1;          // ③ 有时长的排在没有时长的前面
+    /* ①⚠️ 碎片（<60 秒）最先分组，**优先于相关度档位**。
+       ⚠️ 踩过的坑（2026-11-16）：原先只按时长升序，「短的在前」，于是
+          64 秒的《一千年以前》、68 秒的《一开始》这些专辑序曲/过场段
+          挤进搜索第一屏（用户报「混进去翻唱」的直接观感来源之一）。
+          光在档位内部下沉不够——这些碎片有专辑名加分，档位本身并不低，
+          所以在档位比较之前就要先把它们整体压到后面。 */
+    const fragA = da > 0 && da < 60000;
+    const fragB = db > 0 && db < 60000;
+    if (fragA !== fragB) return fragA ? 1 : -1;
+
+    const ba = Math.round(a.score / 100);
+    const bb = Math.round(b.score / 100);
+    if (ba !== bb) return bb - ba;              // ② 相关度档位高的在前
+    if (da > 0 && db > 0 && da !== db) return da - db; // ③ 同档位内：短的在前
+    if (da > 0 && db === 0) return -1;          // ④ 有时长的排在没有时长的前面
     if (da === 0 && db > 0) return 1;
-    return 0;                                    // ④ 完全同级：保持原平台顺序
+    return 0;                                    // ⑤ 完全同级：保持原平台顺序
   });
   const tracks = scored.map((x) => x.t);
 
@@ -3804,17 +3863,72 @@ export async function search({ query, kind, offset }) {
       artistTrusted: t.provider !== "youtube" && t.provider !== "bilibili",
     });
   }
+  /* 【变体去留判定】Live/翻唱/伴奏 版本，只在「同曲有正版」时删掉。
+     ⚠️ 为什么不能一律降权了事（2026-11-16 用户连续两次反馈「混进来翻唱」）：
+        降权只是往后排，用户往下翻几屏照样撞见《美人鱼 (Live)》《(cover周杰伦)》。
+        但也不能一律删 —— 有些歌只有现场版（小众歌/老歌），全删就什么都搜不到。
+        所以按「同名组里有没有非变体版」决定：
+          有正版 → 删掉所有变体（用户要的就是正版）
+          只有变体 → 全部保留（否则这首歌就消失了）
+     ⚠️ 用 COVER_RE + Live 正则判，且必须用 _rawTitle（name 里的括号标记已被洗掉）。 */
+  const variantKey = (t) => normTitle(String(t.name || "")).toLowerCase();
+  const isVariantTrack = (t) => {
+    const raw = String(t._rawTitle || t.name || "");
+    if (COVER_RE.test(raw) || /live|现场|現場|演唱会|演唱會|巡迴|巡回/i.test(raw)) return true;
+    /* 「版本」类：XX版 / Single Version / 变速版 / 重置版 / 深情版…
+       实测（2026-11-16）《美人鱼 (深情版|Single Version)》《(qka777变速版)》
+       标题里没有覆盖词，但明显不是录音室原版，排在正版后面挤占了位置。
+       ⚠️ 只认「括号里带『版/version』」—— 避免误伤《这一版》《特别版》这类专辑名。 */
+    if (/[(（\[【][^)）\]】]*(版|version)[^)）\]】]*[)）\]】]/i.test(raw)) return true;
+    /* 串烧/联唱：标题里用 + 、/ 顿号 并列好几首歌名。
+       实测（2026-11-16）搜「晴天 周杰伦」QQ 第 2 条是
+       《志明与春娇+听妈妈的话+干杯+晴天+离开地球表面+双截棍 (2013小巨蛋演唱会第三场)》
+       —— 13 分钟的演唱会串烧，还被判成「原唱」顶到第二位。
+       判据：歌名部分（去掉括号和艺人前缀后）出现 3 个以上分隔符。 */
+    const titlePart = raw.split(/[(（\[【]/)[0] || "";
+    if ((titlePart.match(/[+＋、·]/g) || []).length >= 2) return true;
+    return false;
+  };
+  const hadCleanVersion = new Set();
+  for (const t of tracks) {
+    if (!isVariantTrack(t)) {
+      const k = variantKey(t);
+      if (k) hadCleanVersion.add(k);
+    }
+  }
+  /* 串烧/联唱单独判：它把好几首歌拼在一起，key 和任何单曲都对不上，
+     走下面的「同名组有正版才删」永远删不掉（实测 QQ《志明与春娇+听妈妈的话+
+     干杯+晴天+…》13 分钟演唱会串烧就这么留在第 2 位）。所以无条件剔除。 */
+  const isMedley = (t) => {
+    const raw = String(t._rawTitle || t.name || "");
+    const titlePart = raw.split(/[(（\[【]/)[0] || "";
+    return (titlePart.match(/[+＋、·]/g) || []).length >= 2;
+  };
+  const dedupedTracks = tracks.filter((t) => {
+    if (isMedley(t)) {
+      console.log("[粽子] 剔除串烧: " + String(t._rawTitle || t.name).slice(0, 30));
+      return false;
+    }
+    if (!isVariantTrack(t)) return true;
+    const k = variantKey(t);
+    if (k && hadCleanVersion.has(k)) {
+      console.log("[粽子] 剔除变体（同曲已有正版）: " + String(t._rawTitle || t.name).slice(0, 30));
+      return false;
+    }
+    return true; // 只有变体版 → 留着
+  });
+
   /* 【VIP 歌去留判定】—— 见上面 _vipNoFallback 的说明。
      所有源的条目都进完 pool 了，现在能看出「这首 VIP 歌有没有可兜底的同曲」：
        同 pool 里存在歌名+歌手都对得上的 YouTube/B站条目 → 保留（播放自动转完整版）
        一条都没有 → 删掉（没会员只能放 48 秒残片，不如不给）
      歌名比对用 normTitle（去掉括号/Live 标记）—— 兜底时 YouTube 本来就选同曲版本，
      这里宽松一点没关系，只要大方向对得上就认为「能兜底」。 */
-  const finalTracks = tracks.filter((t) => {
+  const finalTracks = dedupedTracks.filter((t) => {
     if (!t._vipNoFallback) return true;
     const wantKey = normTitle(t.name);
     const wantArtist = String((t.artists && t.artists[0] && t.artists[0].name) || "").trim();
-    const canFallback = tracks.some((o) => {
+    const canFallback = dedupedTracks.some((o) => {
       if (o === t) return false;
       if (o.provider !== "youtube" && o.provider !== "bilibili") return false;
       const oKey = normTitle(o.name);
