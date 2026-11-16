@@ -5512,10 +5512,14 @@ function runOnce(cmd, args, timeoutMs = 180000) {
       resolve({ ok: false, out: "timeout" });
     }, timeoutMs);
     Promise.resolve(proc.wait())
-      .then(() => {
+      .then((codeMaybe) => {
         if (done) return;
         done = true;
         clearTimeout(timer);
+        /* ⚠️ MyGo 的 proc.wait() **返回退出码**（host.go 里 rt.FromGo(code)）。
+           以前直接丢了它，只能靠 stderr 判断成败 —— 而 ffmpeg 的参数错误
+           在真机上 stderr 常常是空串，于是失败被判成成功。现在留住它。 */
+        const code = typeof codeMaybe === "number" ? codeMaybe : undefined;
         let out = "";
         try {
           out = proc.errorOutput ? String(proc.errorOutput() || "") : "";
@@ -5548,7 +5552,17 @@ function runOnce(cmd, args, timeoutMs = 180000) {
            后面转码时才炸。这里显式识别「进程压根没起来」的情况。 */
         const spawnFailed =
           /ENOENT|no such file|not found|cannot find the file|不是内部或外部命令/i.test(out);
-        resolve({ ok: !spawnFailed, out });
+        /* ⚠️ exitCode 一定要带出来 —— MyGo 的 proc.wait() **返回退出码**
+           （internal/plugin/host.go 里 `return rt.FromGo(code)`）。
+           以前直接丢掉这个返回值，只能靠 stderr 猜成败，而
+           ffmpeg 的参数错误在真机上 stderr 经常是空的（tailWriter 只留尾部、
+           或者错误发生在 tail 之外），于是「不支持」被误判成「支持」。
+           实测（2026-11-16）：essentials 构建不认 -request_size，
+           退 1 且 stderr 拿不到 → 判定「支持」→ 每次转码带该参数 →
+           ffmpeg 立即退出 → 用户看到「这首歌无法播放」。 */
+        const raw = Promise.resolve(proc.wait());
+        // code 已由上面的 wait() 解析出来（若宿主返回非数字则为 undefined）
+        resolve({ ok: !spawnFailed, out, code });
       })
       .catch(() => {
         if (done) return;
@@ -5760,13 +5774,29 @@ async function ffmpegSupports(exe, flagName) {
   let ok = true;
   try {
     /* 用 -version 当作"无害的尾巴"：ffmpeg 会先解析所有选项，
-       遇到不认识的立刻报 Option not found 并 exit 1；
-       认识的话正常打印版本 exit 0。
-       ⚠️ 不用 -h 或空命令 —— 那些行为各构建不一致。 */
+       遇到不认识的立刻报 Option not found 并退出；
+       认识的话正常打印版本。 */
     const probe = await runOnce(exe, ["-request_size", "10485760", "-version"], 8000);
-    ok = probe.ok;
+    /* ⚠️⚠️ 不能只看 probe.ok！（2026-11-16 踩的坑）
+       runOnce 的 ok 只表示「进程起来了、不是 ENOENT」，**退出码 0 也会算 ok**。
+       实测这个 essentials 构建对不认识的选项是：
+           Unrecognized option 'request_size'.
+           Error splitting the argument list: Option not found
+       而且 **returncode 是 0**（不是 1），所以 ok=true → 判定「支持」→
+       每次转码都带上这个参数 → ffmpeg 立刻退出、stderr 被 tailWriter 吞掉只剩空串
+       → 用户看到「这首歌无法播放」。整个兜底链路全废。
+       所以必须自己看输出里的关键字。 */
+    /* 判据三层，任一否定即视为不支持：
+       ① 退出码非 0（最可靠 —— MyGo 的 wait() 会返回它，ffmpeg 参数错误退 1）
+       ② 输出里出现 Unrecognized option / Option not found
+       ③ spawn 本身失败（ENOENT） */
+    const badExit = typeof probe.code === "number" && probe.code !== 0;
+    const badText = /Unrecognized option|Option not found|Error splitting the argument list/i.test(
+      String(probe.out || "")
+    );
+    ok = probe.ok && !badExit && !badText;
   } catch {
-    ok = true; // 探测本身出错时保守放行（宁可试一次，也不主动阉掉功能）
+    ok = false; // 探测本身出错 → 当作不支持（保守：不带该参数也能正常转码）
   }
 
   FF_CAP_CACHE = { path: exe, requestSize: ok };
@@ -7655,9 +7685,9 @@ async function podcastSearch(term, limit = 20) {
       导致字符类错乱、`Unmatched ')'` 报错，RSS 直接解析不出单集。 */
 function xmlPick(str, tag) {
   const c = new RegExp("<" + tag + "(?:\\s[^>]*)?>\\s*<!\\[CDATA\\[([\\s\\S]*?)\\]\\]>", "i").exec(str);
-  if (c) return c[1].trim();
+  if (c) return c[1].trim(); // CDATA 里的内容按定义就是原文，不再解实体
   const p = new RegExp("<" + tag + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tag + ">", "i").exec(str);
-  if (p) return p[1].replace(/<[^>]+>/g, "").trim();
+  if (p) return decodeXmlEntities(p[1].replace(/<[^>]+>/g, "")).trim();
   return "";
 }
 function xmlAttr(str, tag, attr) {
@@ -7675,10 +7705,37 @@ function xmlAttr(str, tag, attr) {
     if (k >= 0) {
       const vs = k + key.length;
       const ve = raw.indexOf('"', vs);
-      if (ve > vs) return raw.slice(vs, ve);
+      if (ve > vs) {
+        /* ⚠️ 属性值必须做 XML 实体解码：RSS 里的 enclosure url 常写成
+           `?channel=rss&amp;album_id=5574153`，原样拿去给 ffmpeg 拉，
+           `&amp;` 会变成一个坏参数，音频直接拉不到
+           （2026-11-16 在喜马拉雅某播客上实测到「ffmpeg 提前退出」就是这个）。
+           ⚠️ 只解码 XML 五个预定义实体 + 数字实体。
+              不能复用 htmlDecode —— 那个会把 &nbsp; 之类也转成字符，
+              对 URL 来说反而是破坏。 */
+        return decodeXmlEntities(raw.slice(vs, ve));
+      }
     }
     i = close + 1;
   }
+}
+
+/** XML 预定义实体 + 数字实体解码（用于属性值/文本） */
+function decodeXmlEntities(s) {
+  return String(s || "")
+    .replace(/&#x([0-9a-fA-F]+);/g, (m, h) => {
+      const n = parseInt(h, 16);
+      return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+    })
+    .replace(/&#(\d+);/g, (m, d) => {
+      const n = parseInt(d, 10);
+      return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : m;
+    })
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&"); // ⚠️ 必须最后做，否则 &amp;lt; 会被二次解码
 }
 
 /* 拉 RSS 单集（带 10 分钟缓存，RSS 有 3MB，不能每次请求都重下） */

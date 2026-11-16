@@ -67,10 +67,18 @@ function realSpawn(exe, args) {
       waiters.forEach((r) => r(e));
     }
   });
-  child.on("close", () => {
+  let exitCode = 0;
+  child.on("close", (code) => {
+    /* ⚠️ 真 MyGo 的 proc.wait() **返回退出码**（host.go 里 rt.FromGo(code)）。
+       这个 mock 以前一律 resolve(null)，导致「ffmpeg 参数不支持」这类
+       靠退出码才能发现的问题在测试里完全测不出来 —— 2026-11-16 就踩了：
+       essentials 构建不认 -request_size，退 1，但插件判成「支持」，
+       每次转码都带该参数，ffmpeg 立刻退出，兜底链路全废。
+       现在 mock 如实返回退出码，测试才能覆盖到。 */
+    exitCode = typeof code === "number" ? code : 0;
     if (!resolved) {
       resolved = true;
-      waiters.forEach((r) => r(null));
+      waiters.forEach((r) => r(exitCode));
     }
   });
   return {
@@ -80,7 +88,7 @@ function realSpawn(exe, args) {
       try { child.stdin.end(); } catch {}
     },
     readLine: () => Promise.resolve(null),
-    wait: () => new Promise((r) => (resolved ? r(null) : waiters.push(r))),
+    wait: () => new Promise((r) => (resolved ? r(exitCode) : waiters.push(r))),
     kill: () => {
       try { child.kill(); } catch {}
     },
